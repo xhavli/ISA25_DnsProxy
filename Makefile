@@ -4,7 +4,7 @@ CXXFLAGS = -Wall -Wextra -std=c++17 -O2
 
 # Output file name and source files
 TARGET = dns
-SRC = main.cpp proxy_config.cpp
+SRC = main.cpp filter_helper.cpp print_helper.cpp
 
 # Default target
 all: $(TARGET)
