@@ -1,21 +1,17 @@
 # Compiler and flags
-CXX = g++
-CXXFLAGS = -Wall -Wextra -std=c++17 -O2
+COMPILER = g++
+FLAGS = -Wall -Wextra -std=c++17 -O2
 
 # Output file name and source files
 TARGET = dns
-SRC = main.cpp filter_helper.cpp print_helper.cpp
+SOURCES = main.cpp filter_helper.cpp print_helper.cpp
 
 # Default target
 all: $(TARGET)
 
 # Rule for linking the executable
-$(TARGET): $(SRC)
-	$(CXX) $(CXXFLAGS) -o $@ $^
-
-# Run the program (does not require sudo)
-run: $(TARGET)
-	./$(TARGET)
+$(TARGET): $(SOURCES)
+	$(COMPILER) $(FLAGS) -o $@ $^
 
 # Clean up the project
 clean:
