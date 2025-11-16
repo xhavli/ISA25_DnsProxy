@@ -1,5 +1,4 @@
-#ifndef RCODE_H
-#define RCODE_H
+#pragma once
 
 // DNS Response Code (RCODE) definitions — RFC 1035
 enum RCODE {
@@ -13,5 +12,3 @@ enum RCODE {
 
 // Function prototype
 const char* RCODE_to_string(enum RCODE code);
-
-#endif // RCODE_H

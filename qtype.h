@@ -1,5 +1,4 @@
-#ifndef QTYPE_H
-#define QTYPE_H
+#pragma once
 
 // DNS QTYPE codes as defined in RFC 1035 and common extensions.
 // These are used in the Question section of a DNS message.
@@ -29,5 +28,3 @@ enum QTYPE {
     // QTYPE_MAILA   = 254,  // request for mail agent records (obsolete)
     // QTYPE_ANY     = 255   // request for all records
 };
-
-#endif // QTYPE_H

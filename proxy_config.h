@@ -1,5 +1,4 @@
-#ifndef PROXY_CONFIG_H
-#define PROXY_CONFIG_H
+#pragma once
 
 #include <string>
 #include <netinet/in.h>
@@ -15,5 +14,3 @@ struct proxy_config {
 
 // Function prototype
 void print_config(const proxy_config &cfg);
-
-#endif // PROXY_CONFIG_H
