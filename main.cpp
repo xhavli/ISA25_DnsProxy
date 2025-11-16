@@ -23,19 +23,12 @@
 #include "qtype.h"
 #include "rcode.h"
 #include "proxy_config.h"
+#include "print_helper.h"
+#include "filter_helper.h"
+#include "dns_structures.h"
 
-using byte = uint8_t;
-
-constexpr int BUF_SIZE = 512; // Standard DNS packet size over UDP
 volatile sig_atomic_t running = 1;
 proxy_config config;
-
-struct dns_packet {
-    uint8_t data[BUF_SIZE];
-    int length{};
-    sockaddr_in clientAddr{};
-    socklen_t clientLen{};
-};
 
 void signal_handler([[maybe_unused]] int signal) {
     running = 0;
@@ -59,10 +52,6 @@ void init_signal_handling() {
         perror("sigaction");
         exit(1);
     }
-}
-
-void print_usage(const char* prog) {
-    std::cerr << "Usage: " << prog << " -s server [-p port] -f filter_file [-v]\n";
 }
 
 void resolve_host_ipv4(const std::string& host, in_addr* out_addr) {
@@ -172,7 +161,9 @@ void parse_arguments(int argc, char *argv[], proxy_config &config) {
     }
 }
 
-int make_udp_socket_with_timeout(int sec = 3) {
+
+
+int make_udp_socket_with_timeout(int sec) {
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) {
         perror("socket");
@@ -191,143 +182,92 @@ bool forward_and_relay(int listen_sock, const dns_packet &pkt, const proxy_confi
     upstream.sin_port   = htons(53); // DNS port
     upstream.sin_addr   = cfg.server_ip;
 
-    int upstreamfd = make_udp_socket_with_timeout();
-    if (upstreamfd < 0) return false;
+    int upstream_sock_fd = make_udp_socket_with_timeout(3);
+    if (upstream_sock_fd < 0) return false;
 
-    ssize_t sent = sendto(upstreamfd, pkt.data, pkt.length, 0, reinterpret_cast<sockaddr*>(&upstream), sizeof(upstream));
+    ssize_t sent = sendto(upstream_sock_fd, pkt.data, pkt.length, 0, reinterpret_cast<sockaddr*>(&upstream), sizeof(upstream));
     if (sent < 0) {
         perror("sendto (upstream)");
-        close(upstreamfd);
+        close(upstream_sock_fd);
         return false;
     }
 
-    uint8_t buf[BUF_SIZE];
-    ssize_t rcv = recv(upstreamfd, buf, sizeof(buf), 0);
+    uint8_t buf[BUFFER_SIZE];
+    ssize_t rcv = recv(upstream_sock_fd, buf, sizeof(buf), 0);
     if (rcv < 0) {
         perror("recv(upstream)");
-        close(upstreamfd);
+        close(upstream_sock_fd);
         return false;
     }
 
     if (sendto(listen_sock, buf, rcv, 0,(sockaddr*)&pkt.clientAddr, pkt.clientLen) < 0) {
         perror("sendto(client)");
-        close(upstreamfd);
+        close(upstream_sock_fd);
         return false;
     }
 
     if (cfg.verbose) {
         char cip[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &pkt.clientAddr.sin_addr, cip, sizeof(cip));
-        std::cout << "Relayed " << rcv << " bytes from " << cfg.server
+        std::cout << "  Relayed " << rcv << " bytes from " << cfg.server
                   << " to " << cip << ":" << ntohs(pkt.clientAddr.sin_port) << "\n";
     }
 
-    close(upstreamfd);
+    close(upstream_sock_fd);
     return true;
 }
 
-std::vector<std::string> load_filters(const std::string &filename) {
-    std::vector<std::string> filters;
-    std::ifstream file(filename);
-    if (!file.is_open()) {
-        std::cerr << "Failed to open filter file: " << filename << "\n";
-        return filters;
-    }
-
-    std::string line;
-    while (std::getline(file, line)) {
-        // Trim whitespace
-        line.erase(0, line.find_first_not_of(" \t\r\n"));
-        line.erase(line.find_last_not_of(" \t\r\n") + 1);
-        if (line.empty() || line[0] == '#') continue;
-
-        // Normalize to lowercase
-        std::transform(line.begin(), line.end(), line.begin(), ::tolower);
-        filters.push_back(line);
-    }
-
-    if (config.verbose) {
-        std::cout << "Loaded " << filters.size() << " blocked domains from " << filename << std::endl;
-        std::cout << "================================" << std::endl;
-    }
-
-    return filters;
-}
-
-std::string extract_domain(const dns_packet &pkt) {
-    if (pkt.length < 12) return "";
-    int offset = 12;    // Skip DNS 12 bytes header
-    std::string name;
-
-    while (offset < pkt.length && pkt.data[offset] != 0) {
-        int len = pkt.data[offset++];
-        if (offset + len > pkt.length) return "";
-        if (!name.empty()) name += ".";
-        name.append(reinterpret_cast<const char*>(&pkt.data[offset]), len);
-        offset += len;
-    }
-
-    return name;
-}
-
-bool is_blocked(const std::string &domain, const std::vector<std::string> &filters) {
-    std::string d = domain;
-    std::transform(d.begin(), d.end(), d.begin(), ::tolower);
-
-    for (const auto &blocked : filters) {
-        if (d == blocked) return true;
-        if (d.size() > blocked.size() &&
-            d.compare(d.size() - blocked.size(), blocked.size(), blocked) == 0 &&
-            d[d.size() - blocked.size() - 1] == '.') {
-            return true; // subdomain match
-        }
-    }
-
-    return false;
-}
-
-void process_query(const dns_packet &pkt) {
-    if (pkt.length < 12) {
-        std::cerr << "Invalid packet length\n";
-        return;
-    }
+dns_query analyze_query(const dns_packet &pkt, const std::vector<filter_rule> &filters, const proxy_config &cfg)
+{
+    dns_query query;
+    if (pkt.length < DNS_HEADER_LENGTH)
+        return query;
 
     // --- Parse header ---
-    uint16_t id = (pkt.data[0] << 8) | pkt.data[1];
+    query.id = (pkt.data[0] << 8) | pkt.data[1];
     uint16_t qdcount = (pkt.data[4] << 8) | pkt.data[5];
 
-    // --- Parse question section ---
-    int offset = 12; // DNS header is 12 bytes
+    if (qdcount != 1)
+        return query;
+
+    // --- Extract QNAME ---
+    int offset = DNS_HEADER_LENGTH;
     std::string qname;
 
-    // extract QNAME (sequence of labels)
     while (offset < pkt.length && pkt.data[offset] != 0) {
         int label_len = pkt.data[offset++];
-        if (offset + label_len > pkt.length) return;
+        if (offset + label_len > pkt.length) return query;
+
         if (!qname.empty()) qname += ".";
         qname.append(reinterpret_cast<const char*>(&pkt.data[offset]), label_len);
         offset += label_len;
     }
 
-    offset++; // skip null byte
+    offset++; // Skip null terminator
 
-    if (offset + 4 > pkt.length) return;
+    if (offset + 4 > pkt.length)
+        return query;
 
-    uint16_t qtype = (pkt.data[offset] << 8) | pkt.data[offset + 1];
-    uint16_t qclass = (pkt.data[offset + 2] << 8) | pkt.data[offset + 3];
+    query.qname = qname;
 
-    char client_ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &pkt.clientAddr.sin_addr, client_ip, sizeof(client_ip));
-    int client_port = ntohs(pkt.clientAddr.sin_port);
+    query.qtype  = (pkt.data[offset] << 8) | pkt.data[offset + 1];
+    query.qclass = (pkt.data[offset + 2] << 8) | pkt.data[offset + 3];
 
-    std::cout << "Query received:\n";
-    std::cout << "  ID: " << id << "\n";
-    std::cout << "  From: " << client_ip << ":" << client_port << "\n";
-    std::cout << "  Questions: " << qdcount << "\n";
-    std::cout << "  Name: " << qname << "\n";
-    std::cout << "  Type: " << qtype << " ("
-              << (qtype == 1 ? "A" : qtype == 28 ? "AAAA" : "Other") << ")\n";
-    std::cout << "  Class: " << qclass << "\n";
+    // --- Normalize for checking ---
+    std::string d = query.qname;
+    std::transform(d.begin(), d.end(), d.begin(), ::tolower);
+
+    // --- Check filter list ---
+    query.blocked = is_blocked(d, filters);
+
+    query.valid = true;
+
+    // --- Verbose logging ---
+    if (cfg.verbose) {
+        print_query(query, pkt);
+    }
+
+    return query;
 }
 
 int create_socket(uint16_t port = 53) {
@@ -353,7 +293,7 @@ int create_socket(uint16_t port = 53) {
 
 bool receive_query(int sockfd, dns_packet &pkt) {
     pkt.clientLen = sizeof(pkt.clientAddr);
-    pkt.length = recvfrom(sockfd, pkt.data, BUF_SIZE, 0, reinterpret_cast<sockaddr*>(&pkt.clientAddr), &pkt.clientLen);
+    pkt.length = recvfrom(sockfd, pkt.data, BUFFER_SIZE, 0, reinterpret_cast<sockaddr*>(&pkt.clientAddr), &pkt.clientLen);
 
     if (pkt.length < 0) {
         if (!running) return false;
@@ -365,13 +305,12 @@ bool receive_query(int sockfd, dns_packet &pkt) {
 }
 
 void send_response(int sockfd, const dns_packet &pkt, RCODE code) {
-    if (pkt.length < 12) {
-        // DNS header is at least 12 bytes
+    if (pkt.length < DNS_HEADER_LENGTH) {
         std::cerr << "Invalid DNS packet received\n";
         return;
     }
 
-    uint8_t response[BUF_SIZE];
+    uint8_t response[BUFFER_SIZE];
     memcpy(response, pkt.data, pkt.length);
 
     // QR = 1 (response)
@@ -400,68 +339,49 @@ int main(int argc, char *argv[]) {
         print_config(config);
     }
 
-    auto filters = load_filters(config.filter_file);
+    auto filters = load_filters(config.filter_file, config.verbose);
 
-    int sockfd = create_socket(config.port);
-    if (sockfd < 0) {
+    int wellcome_sock_fd = create_socket(config.port);
+    if (wellcome_sock_fd < 0) {
         perror("ERROR: creating socket");
         return 1;
     }
 
     while (running) {
         dns_packet pkt{};
-        if (!receive_query(sockfd, pkt))
+        if (!receive_query(wellcome_sock_fd, pkt))
             continue;
 
-        process_query(pkt);
+        auto qi = analyze_query(pkt, filters, config);
 
-        std::string qname = extract_domain(pkt);
-        if (qname.empty()) {
-            std::cerr << "WARNING: Failed to parse query\n";
+        if (!qi.valid) {
+            send_response(wellcome_sock_fd, pkt, RCODE_FORMAT_ERROR);
             continue;
         }
 
-        bool blocked = is_blocked(qname, filters);
-        if (blocked) {
+        if (qi.blocked) {
             std::cout << "  RESPONSE: Blocked (RCODE_REFUSED)\n";
-            send_response(sockfd, pkt, RCODE_REFUSED);
-        } else {
-            // Only A queries over UDP are supported here. Everything else => NOT_IMPLEMENTED
-            int off = 12;
-            while (off < pkt.length && pkt.data[off] != 0) off += 1 + pkt.data[off];
-            off++; // zero
-            if (off + 4 > pkt.length) { send_response(sockfd, pkt, RCODE_FORMAT_ERROR); continue; }
-            
-            uint16_t qtype  = (pkt.data[off] << 8) | pkt.data[off+1];
-            uint16_t qclass = (pkt.data[off+2] << 8) | pkt.data[off+3];
-            uint16_t qdcount = (pkt.data[4] << 8) | pkt.data[5];
-            
-            if (qclass != QCLASS_IN) {  // IN only
-                std::cout << "  RESPONSE: QCLASS " << qclass << " (RCODE_NOT_IMPLEMENTED)\n";
-                send_response(sockfd, pkt, RCODE_NOT_IMPLEMENTED);
-                continue; 
-            }
-            if (qtype  != QTYPE_A) {    // A only
-                std::cout << "  RESPONSE: QTYPE " << qtype << " (RCODE_NOT_IMPLEMENTED)\n";
-                send_response(sockfd, pkt, RCODE_NOT_IMPLEMENTED);
-                continue;
-            }
-
-            if (qdcount != 1) { // Only 1 question supported
-                send_response(sockfd, pkt, RCODE_FORMAT_ERROR);
-                continue;
-            }
-            
-            // Forward to real resolver and relay the answer
-            if (!forward_and_relay(sockfd, pkt, config)) {
-                send_response(sockfd, pkt, RCODE_SERVER_FAILURE);
-            }
-            std::cout << "  RESPONSE: Allowed (RCODE_NO_ERROR)\n";
+            send_response(wellcome_sock_fd, pkt, RCODE_REFUSED);
+            continue;
         }
-        std::cout << "------------------------------------" << std::endl;
+
+        // Only support A IN queries
+        if (qi.qclass != QCLASS_IN || qi.qtype != QTYPE_A) {
+            std::cout << "  RESPONSE: Not implemented\n";
+            send_response(wellcome_sock_fd, pkt, RCODE_NOT_IMPLEMENTED);
+            continue;
+        }
+
+        // Relay upstream
+        if (!forward_and_relay(wellcome_sock_fd, pkt, config)) {
+            send_response(wellcome_sock_fd, pkt, RCODE_SERVER_FAILURE);
+        }
+
+        std::cout << "  RESPONSE: Allowed (RCODE_NO_ERROR)\n";
+        std::cout << "------------------------------------\n";
     }
 
-    close(sockfd);
+    close(wellcome_sock_fd);
     std::cout << std::endl << "Proxy terminated successfully" << std::endl;
     return 0;
     // TODO dig @127.0.0.1 -p 5300 example.com A +short +tries=1 +retry=0
