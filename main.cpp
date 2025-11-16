@@ -19,13 +19,13 @@
 #include <signal.h>
 #include <atomic>
 
-#include "qclass.h"
-#include "qtype.h"
-#include "rcode.h"
-#include "proxy_config.h"
-#include "print_helper.h"
-#include "filter_helper.h"
-#include "dns_structures.h"
+#include "qclass.hpp"
+#include "qtype.hpp"
+#include "rcode.hpp"
+#include "proxy_config.hpp"
+#include "print_helper.hpp"
+#include "filter_helper.hpp"
+#include "dns_structures.hpp"
 
 volatile sig_atomic_t running = 1;
 proxy_config config;

@@ -2,10 +2,10 @@
 #include <iomanip>
 #include <arpa/inet.h>
 
-#include "qtype.h"
-#include "qclass.h"
-#include "print_helper.h"
-#include "dns_structures.h"
+#include "qtype.hpp"
+#include "qclass.hpp"
+#include "print_helper.hpp"
+#include "dns_structures.hpp"
 
 void print_usage(const char* prog) {
     std::cerr << "Usage: " << prog << " -s server [-p port] -f filter_file [-v]\n";

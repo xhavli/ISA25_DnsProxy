@@ -1,7 +1,8 @@
-#include "filter_helper.h"
 #include <fstream>
 #include <iostream>
 #include <algorithm>
+
+#include "filter_helper.hpp"
 
 static inline void trim(std::string &s) {
     size_t start = s.find_first_not_of(" \t\r\n");

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "proxy_config.h"
-#include "dns_structures.h"
+#include "proxy_config.hpp"
+#include "dns_structures.hpp"
 
 void print_usage(const char* prog);
 void print_config(const proxy_config& cfg);
