@@ -29,9 +29,25 @@ void print_config(const proxy_config& config) {
 }
 
 void print_query(const dns_query& query, const dns_packet& pkt) {
-    char client_ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &pkt.clientAddr.sin_addr, client_ip, sizeof(client_ip));
-    int client_port = ntohs(pkt.clientAddr.sin_port);
+    char client_ip[INET6_ADDRSTRLEN];
+    int client_port = 0;
+    const void* addr_ptr = nullptr;
+
+    if (pkt.clientAddr.ss_family == AF_INET) {
+        const sockaddr_in* addr4 = reinterpret_cast<const sockaddr_in*>(&pkt.clientAddr);
+        addr_ptr = &(addr4->sin_addr);
+        client_port = ntohs(addr4->sin_port);
+    } else if (pkt.clientAddr.ss_family == AF_INET6) {
+        const sockaddr_in6* addr6 = reinterpret_cast<const sockaddr_in6*>(&pkt.clientAddr);
+        addr_ptr = &(addr6->sin6_addr);
+        client_port = ntohs(addr6->sin6_port);
+    }
+
+    if (addr_ptr) {
+        inet_ntop(pkt.clientAddr.ss_family, addr_ptr, client_ip, sizeof(client_ip));
+    } else {
+        std::snprintf(client_ip, sizeof(client_ip), "(unknown)");
+    }
 
     std::cout << "Query received:\n";
     std::cout << "  ID: " << query.id << "\n";

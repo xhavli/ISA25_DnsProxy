@@ -1,23 +1,21 @@
 #include <iostream>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <stdexcept>
-#include <unistd.h>
+#include <iomanip>
 #include <vector>
+#include <string>
+#include <cstring>
+#include <cstdint>
+#include <cctype>
+#include <csignal>
+#include <atomic>
 #include <algorithm>
 #include <fstream>
 
-#include <cstring>
-#include <string>
-#include <format>
-#include <cstdint>
-#include <cctype>
-#include <iomanip>
-
-#include <csignal>
-#include <signal.h>
-#include <atomic>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 
 #include "qclass.hpp"
 #include "qtype.hpp"
@@ -200,18 +198,28 @@ bool forward_and_relay(int listen_sock, const dns_packet &pkt, const proxy_confi
         return false;
     }
 
-    if (sendto(listen_sock, buf, rcv, 0,(sockaddr*)&pkt.clientAddr, pkt.clientLen) < 0) {
+    if (sendto(listen_sock, buf, rcv, 0, (sockaddr*)&pkt.clientAddr, pkt.clientLen) < 0) {
         perror("sendto(client)");
         close(upstream_sock_fd);
         return false;
     }
 
     if (cfg.verbose) {
-        char cip[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &pkt.clientAddr.sin_addr, cip, sizeof(cip));
-        std::cout << "  Relayed " << rcv << " bytes from " << cfg.server
-                  << " to " << cip << ":" << ntohs(pkt.clientAddr.sin_port) << "\n";
+        char cip[INET6_ADDRSTRLEN];
+        void* addr_ptr = nullptr;
+
+        if (pkt.clientAddr.ss_family == AF_INET) {
+            const sockaddr_in* addr4 = reinterpret_cast<const sockaddr_in*>(&pkt.clientAddr);
+            addr_ptr = (void*)&addr4->sin_addr;
+        } else if (pkt.clientAddr.ss_family == AF_INET6) {
+            const sockaddr_in6* addr6 = reinterpret_cast<const sockaddr_in6*>(&pkt.clientAddr);
+            addr_ptr = (void*)&addr6->sin6_addr;
+        }
+
+        inet_ntop(pkt.clientAddr.ss_family, addr_ptr, cip, sizeof(cip));
+        std::cout << "  Relayed " << rcv << " bytes from " << cfg.server << " to " << cip << std::endl;
     }
+
 
     close(upstream_sock_fd);
     return true;
@@ -271,29 +279,39 @@ dns_query analyze_query(const dns_packet &pkt, const std::vector<filter_rule> &f
 }
 
 int create_socket(uint16_t port = 53) {
-    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);    // IPv4 UDP socket
-    if (sockfd < 0) {
+    // Create a UDP IPv6 socket for dual stack (IPv4 + IPv6)
+    int sock_fd = socket(AF_INET6, SOCK_DGRAM, 0);
+    if (sock_fd < 0) {
         perror("socket");
         return -1;
     }
 
-    sockaddr_in local{};
-    local.sin_family = AF_INET; // IPv4
-    local.sin_addr.s_addr = INADDR_ANY; // Bind to all interfaces
-    local.sin_port = htons(port);   // Host to network byte order
-
-    if (bind(sockfd, reinterpret_cast<sockaddr*>(&local), sizeof(local)) < 0) {
-        perror("bind");
-        close(sockfd);
+    // Disable IPv6-only mode to allow both IPv4 and IPv6
+    int off = 0;
+    if (setsockopt(sock_fd, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off)) < 0) {
+        perror("setsockopt IPV6_V6ONLY");
+        close(sock_fd);
         return -1;
     }
 
-    return sockfd;
+    // Bind to all interfaces (IPv4 and IPv6)
+    sockaddr_in6 local{};
+    local.sin6_family = AF_INET6;
+    local.sin6_addr = in6addr_any; // Accept connections from any IPv6 or IPv4 address
+    local.sin6_port = htons(port);
+
+    if (bind(sock_fd, reinterpret_cast<sockaddr*>(&local), sizeof(local)) < 0) {
+        perror("bind");
+        close(sock_fd);
+        return -1;
+    }
+
+    return sock_fd;
 }
 
-bool receive_query(int sockfd, dns_packet &pkt) {
+bool receive_query(int sock_fd, dns_packet &pkt) {
     pkt.clientLen = sizeof(pkt.clientAddr);
-    pkt.length = recvfrom(sockfd, pkt.data, BUFFER_SIZE, 0, reinterpret_cast<sockaddr*>(&pkt.clientAddr), &pkt.clientLen);
+    pkt.length = recvfrom(sock_fd, pkt.data, BUFFER_SIZE, 0, reinterpret_cast<sockaddr*>(&pkt.clientAddr), &pkt.clientLen);
 
     if (pkt.length < 0) {
         if (!running) return false;
@@ -304,7 +322,7 @@ bool receive_query(int sockfd, dns_packet &pkt) {
     return true;
 }
 
-void send_response(int sockfd, const dns_packet &pkt, RCODE code) {
+void send_response(int sock_fd, const dns_packet &pkt, RCODE code) {
     if (pkt.length < DNS_HEADER_LENGTH) {
         std::cerr << "Invalid DNS packet received\n";
         return;
@@ -324,7 +342,7 @@ void send_response(int sockfd, const dns_packet &pkt, RCODE code) {
     response[8] = response[9] = 0;
     response[10] = response[11] = 0;
 
-    ssize_t sent = sendto(sockfd, response, pkt.length, 0, reinterpret_cast<const sockaddr*>(&pkt.clientAddr), pkt.clientLen);
+    ssize_t sent = sendto(sock_fd, response, pkt.length, 0, reinterpret_cast<const sockaddr*>(&pkt.clientAddr), pkt.clientLen);
 
     if (sent < 0)
         perror("sendto (response)");
@@ -352,37 +370,33 @@ int main(int argc, char *argv[]) {
         if (!receive_query(wellcome_sock_fd, pkt))
             continue;
 
-        auto qi = analyze_query(pkt, filters, config);
+        dns_query query = analyze_query(pkt, filters, config);
 
-        if (!qi.valid) {
+        if (!query.valid) {
             send_response(wellcome_sock_fd, pkt, RCODE_FORMAT_ERROR);
-            continue;
         }
 
-        if (qi.blocked) {
+        if (query.blocked) {
             std::cout << "  RESPONSE: Blocked (RCODE_REFUSED)\n";
             send_response(wellcome_sock_fd, pkt, RCODE_REFUSED);
-            continue;
         }
 
         // Only support A IN queries
-        if (qi.qclass != QCLASS_IN || qi.qtype != QTYPE_A) {
+        if (query.qclass != QCLASS_IN || query.qtype != QTYPE_A) {
             std::cout << "  RESPONSE: Not implemented\n";
             send_response(wellcome_sock_fd, pkt, RCODE_NOT_IMPLEMENTED);
-            continue;
         }
 
         // Relay upstream
         if (!forward_and_relay(wellcome_sock_fd, pkt, config)) {
+            std::cout << "  RESPONSE: Allowed (RCODE_NO_ERROR)\n";
             send_response(wellcome_sock_fd, pkt, RCODE_SERVER_FAILURE);
         }
 
-        std::cout << "  RESPONSE: Allowed (RCODE_NO_ERROR)\n";
         std::cout << "------------------------------------\n";
     }
 
     close(wellcome_sock_fd);
     std::cout << std::endl << "Proxy terminated successfully" << std::endl;
     return 0;
-    // TODO dig @127.0.0.1 -p 5300 example.com A +short +tries=1 +retry=0
 }

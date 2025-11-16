@@ -10,10 +10,11 @@ constexpr int DNS_HEADER_LENGTH = 12;
 
 struct dns_packet {
     uint8_t data[BUFFER_SIZE];
-    int length{};
-    sockaddr_in clientAddr{};
-    socklen_t clientLen{};
+    ssize_t length;
+    sockaddr_storage clientAddr;
+    socklen_t clientLen;
 };
+
 
 struct dns_query {
     bool valid = false;
