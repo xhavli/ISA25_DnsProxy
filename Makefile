@@ -4,7 +4,7 @@ FLAGS = -Wall -Wextra -std=c++17 -O2
 
 # Output file name and source files
 TARGET = dns
-SOURCES = main.cpp filter_helper.cpp print_helper.cpp
+SOURCES = main.cpp filter_helper.cpp print_helper.cpp rcode.cpp
 
 # Default target
 all: $(TARGET)
