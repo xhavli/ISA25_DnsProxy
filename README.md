@@ -16,6 +16,10 @@ Task assignment available on [link](https://www.vut.cz/studis/student.phtml?scri
 
 Solution available on GitHub [repository](https://github.com/xhavli/ISA25_DnsProxy)
 
+<!-- markdownlint-disable MD033 -->
+<div style="page-break-after: always;"></div>
+<!-- markdownlint-enable MD033 -->
+
 ## Summary
 
 - [Problem Introduction](#problem-introduction)
@@ -38,6 +42,10 @@ Solution available on GitHub [repository](https://github.com/xhavli/ISA25_DnsPro
 - [Bibliography](#bibliography)
 - [Notes](#notes)
 
+<!-- markdownlint-disable MD033 -->
+<div style="page-break-after: always;"></div>
+<!-- markdownlint-enable MD033 -->
+
 ## Problem Introduction
 
 This is a short introduction to pure DNS concepts and flow, not DNSSEC - secured version of DNS, DoH etc.
@@ -51,6 +59,10 @@ Picture taken from [ISA 2025 BASICS](#bibliography)
 
 ![TCP/IP_MODEL](docs/TcpIpModel.png)  
 Picture taken from [ISA 2025 BASICS](#bibliography)
+
+<!-- markdownlint-disable MD033 -->
+<div style="page-break-after: always;"></div>
+<!-- markdownlint-enable MD033 -->
 
 ## DNS
 
@@ -69,6 +81,10 @@ Format of DNS communication is based on binary protocol described in [RFC1035](#
 
 ![DnsProtocol](docs/DnsProtocol.png)  
 Picture taken from [ISA 2025 DNS](#bibliography)
+
+<!-- markdownlint-disable MD033 -->
+<div style="page-break-after: always;"></div>
+<!-- markdownlint-enable MD033 -->
 
 ## Program Dependencies
 
@@ -109,6 +125,10 @@ Provide every possible arguments:
 | Verbose        | `-v`     | optional   | false          |                 | Enable verbose output if provided
 
 - In case some of optional argument `-p` will not be provided, "WARNING" will be shown and default values will be set
+
+<!-- markdownlint-disable MD033 -->
+<div style="page-break-after: always;"></div>
+<!-- markdownlint-enable MD033 -->
 
 ### Filter file
 
@@ -154,6 +174,10 @@ Output examples:
         Response: RCODE_NO_ERROR
     ```
 
+<!-- markdownlint-disable MD033 -->
+<div style="page-break-after: always;"></div>
+<!-- markdownlint-enable MD033 -->
+
 - Received query with allowed domain over IPv6:
 
     ```plaintext
@@ -182,6 +206,10 @@ Output examples:
         Blocked: YES
         Response: RCODE_REFUSED
     ```
+
+<!-- markdownlint-disable MD033 -->
+<div style="page-break-after: always;"></div>
+<!-- markdownlint-enable MD033 -->
 
 ## Implementation Details
 
@@ -228,6 +256,10 @@ ISA25_DNSPROXY
 └── README.md
 ```
 
+<!-- markdownlint-disable MD033 -->
+<div style="page-break-after: always;"></div>
+<!-- markdownlint-enable MD033 -->
+
 ### Program Flow
 
 - Init signal handling
@@ -269,6 +301,10 @@ int main(int argc, char *argv[]) {
 }
 ```
 
+<!-- markdownlint-disable MD033 -->
+<div style="page-break-after: always;"></div>
+<!-- markdownlint-enable MD033 -->
+
 ### Worker Code Snippet
 
 ```c++
@@ -300,6 +336,10 @@ void worker(int sock, const std::unordered_set<std::string>& filters) {
 - 0 on success
 - 1 on any error
 
+<!-- markdownlint-disable MD033 -->
+<div style="page-break-after: always;"></div>
+<!-- markdownlint-enable MD033 -->
+
 ## Tests
 
 ### Manual Tests
@@ -313,6 +353,10 @@ Application is compilable on the reference machine Merlin.
     ```
 
     ![AllowedIPv4Query](docs/AllowedIPv4Query.png)
+
+<!-- markdownlint-disable MD033 -->
+<div style="page-break-after: always;"></div>
+<!-- markdownlint-enable MD033 -->
 
 - DNS query with allowed domain over IPv6:
 
@@ -330,7 +374,13 @@ Application is compilable on the reference machine Merlin.
 
     ![BlockedIPv4Query](docs/BlockedIPv4Query.png)
 
+<!-- markdownlint-disable MD033 -->
+<div style="page-break-after: always;"></div>
+<!-- markdownlint-enable MD033 -->
+
 ### Automated Tests
+
+Automated tests contains 14 tests covering argument parsing, filter_file validation, and also integration tests.
 
 Requirements:
 
@@ -339,7 +389,7 @@ Requirements:
 - socat - any
 - dig - any
 
-Automated tests was developed mainly with ChatGPT according my manual test scenarios. It cover argument parsing, filter_file validation, and also integration tests.
+This tests was developed mainly with ChatGPT according my manual test scenarios.
 
 Tests runs with command `make test` as it is mentioned in [Program Execution](#program-execution)
 
