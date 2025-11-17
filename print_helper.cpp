@@ -11,21 +11,31 @@ void print_usage(const char* prog) {
     std::cerr << "Usage: " << prog << " -s server [-p port] -f filter_file [-v]\n";
 }
 
-void print_config(const proxy_config& config) {
-    char ipbuf[INET_ADDRSTRLEN]{};
-    inet_ntop(AF_INET, &config.server_ip, ipbuf, sizeof(ipbuf));
-    std::cout << "====== DNS Proxy Configuration ======" << std::endl;
-    std::cout << std::left << std::setw(15) << "Server addr:"
-              << (config.server.empty() ? "(none)" : config.server) << std::endl;
-    std::cout << std::left << std::setw(15) << "Resolved IP:"
-              << (config.server.empty() ? "(none)" : ipbuf) << std::endl;
-    std::cout << std::left << std::setw(15) << "Port:"
-              << config.port << std::endl;
-    std::cout << std::left << std::setw(15) << "Filter file:"
-              << (config.filter_file.empty() ? "(none)" : config.filter_file) << std::endl;
-    std::cout << std::left << std::setw(15) << "Verbose:"
-              << (config.verbose ? "enabled" : "disabled") << std::endl;
-    std::cout << "======================================" << std::endl;
+void print_config(const proxy_config& config, const upstream_server& upstream) {
+    std::cout << "====== DNS Proxy Configuration ======\n";
+    std::cout << std::left << std::setw(15) << "Server addr:" << config.server << "\n";
+
+    if (upstream.has_ipv4) {
+        char buf4[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &upstream.v4.sin_addr, buf4, sizeof(buf4));
+        std::cout << std::left << std::setw(15) << "IPv4 upstream:" << buf4 << "\n";
+    }
+    if (upstream.has_ipv6) {
+        char buf6[INET6_ADDRSTRLEN];
+        inet_ntop(AF_INET6, &upstream.v6.sin6_addr, buf6, sizeof(buf6));
+        std::cout << std::left << std::setw(15) << "IPv6 upstream:" << buf6 << "\n";
+    }
+
+    std::cout << std::left << std::setw(15) << "Listening on:";
+
+    if (upstream.has_ipv4) std::cout << "IPv4 ";
+    if (upstream.has_ipv6) std::cout << "IPv6 ";
+    std::cout << "\n";
+
+    std::cout << std::left << std::setw(15) << "Port:" << config.port << "\n";
+    std::cout << std::left << std::setw(15) << "Filter file:" << config.filter_file << "\n";
+    std::cout << std::left << std::setw(15) << "Verbose:" << (config.verbose ? "enabled" : "disabled") << "\n";
+    std::cout << "======================================\n";
 }
 
 void print_query(const dns_query& query, const dns_packet& pkt) {
