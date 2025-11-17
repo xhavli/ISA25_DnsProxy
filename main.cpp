@@ -385,7 +385,7 @@ void worker(int sock, const std::unordered_set<std::string>& filters) {
             send_response(sock, pkt, RCODE_FORMAT_ERROR);
         } else if (query.blocked) {
             send_response(sock, pkt, RCODE_REFUSED);
-        } else if (query.qtype != QTYPE_A || query.qclass != QCLASS_IN) {
+        } else if (query.qtype != QTYPE_A || query.qclass != QCLASS_IN || query.qdcount != 1) {
             send_response(sock, pkt, RCODE_NOT_IMPLEMENTED);
         } else if (!relay(pkt.data, pkt.length, pkt)) {
             send_response(sock, pkt, RCODE_SERVER_FAILURE);

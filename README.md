@@ -186,6 +186,7 @@ Output examples:
 ## Implementation Details
 
 The application avoids object-oriented programming (OOP) in C++ and uses a plain C-style approach.
+Program is running only over UDP transport protocol. It handle only A records. Other are returned back to client with one of RCODE defined in standard according to [Worker Code Snippet](#worker-code-snippet). This include QTYPE different from A, QCLASS different from IN and QDCOUND different from 1 or just some malformed requests or server failure.
 
 ### Architecture
 
