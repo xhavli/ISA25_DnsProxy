@@ -90,7 +90,7 @@ void resolve_upstream(const std::string& host, upstream_server& up) {
     }
 }
 
-int bind_non_blocking_ipv4(uint16_t port) {
+int bind_ipv4(uint16_t port) {
     int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
@@ -101,12 +101,11 @@ int bind_non_blocking_ipv4(uint16_t port) {
         close(sock_fd);
         return -1;
     }
-    set_non_blocking(sock_fd);
 
     return sock_fd;
 }
 
-int bind_non_blocking_ipv6(uint16_t port) {
+int bind_ipv6(uint16_t port) {
     int sock_fd = socket(AF_INET6, SOCK_DGRAM, 0);
     int on = 1;
     setsockopt(sock_fd, IPPROTO_IPV6, IPV6_V6ONLY, &on, sizeof(on));
@@ -119,7 +118,6 @@ int bind_non_blocking_ipv6(uint16_t port) {
         close(sock_fd);
         return -1;
     }
-    set_non_blocking(sock_fd);
 
     return sock_fd;
 }
@@ -349,24 +347,39 @@ void send_response(int sock_fd, const dns_packet &pkt, RCODE code) {
     }
 }
 
-// Per-socket worker
+// Worker per-socket
 void worker(int sock, const std::unordered_set<std::string>& filters) {
+    dns_packet pkt{};
+    pkt.sockfd = sock;
+    
     while (running) {
-        dns_packet pkt{};
-        pkt.sockfd = sock;
-        pkt.clientLen = sizeof(pkt.clientAddr);
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(sock, &fds);
 
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 100000; // 100ms timeout
+
+        int ret = select(sock + 1, &fds, nullptr, nullptr, &tv);
+
+        // std::cout << "Waiting for data..." << std::endl;
+        if (ret < 0) {
+            if (errno == EINTR) continue; // Interrupted by signal
+            perror("ERROR: select");
+            break;
+        } else if (ret == 0) {
+            continue; // timeout, loop around and check `running`
+        }
+        
+        // Data is available
+        pkt.clientLen = sizeof(pkt.clientAddr);
         pkt.length = recvfrom(sock, pkt.data, BUFFER_SIZE, 0, (sockaddr*)&pkt.clientAddr, &pkt.clientLen);
 
         if (pkt.length < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // No data, sleep briefly
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                continue;
-            } else {
-                perror("recvfrom");
-                continue;
-            }
+            if (errno == EINTR) continue;
+            perror("ERROR: recvfrom");
+            continue;
         }
 
         dns_query query = analyze_query(pkt, filters, config);
@@ -394,8 +407,8 @@ int main(int argc, char *argv[]) {
     if (config.verbose) { print_config(config, upstream); }
     std::unordered_set<std::string> filters = load_filters(config.filter_file, config.verbose);
 
-    int ipv4_sock_fd = bind_non_blocking_ipv4(config.port);
-    int ipv6_sock_fd = bind_non_blocking_ipv6(config.port);
+    int ipv4_sock_fd = bind_ipv4(config.port);
+    int ipv6_sock_fd = bind_ipv6(config.port);
 
     if (ipv4_sock_fd < 0 && ipv6_sock_fd < 0) {
         std::cerr <<"ERROR: could not bind IPv4 or IPv6 sockets\n";
