@@ -10,3 +10,10 @@ struct proxy_config {
     std::string filter_file; // Path to filter file
     bool verbose = false;    // Verbose output
 };
+
+struct upstream_server {
+    bool has_ipv4 = false;
+    bool has_ipv6 = false;
+    sockaddr_in  v4{};
+    sockaddr_in6 v6{};
+};
