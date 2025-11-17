@@ -332,7 +332,14 @@ Application is compilable on the reference machine Merlin.
 
 ### Automated Tests
 
-Automated tests was developed mainly with ChatGPT according my test scenarios. It cover argument parsing, filter_file validation, and also integration tests.
+Requirements:
+
+- Python >= 3.8
+- Pytest >= 7.0
+- socat - any
+- dig - any
+
+Automated tests was developed mainly with ChatGPT according my manual test scenarios. It cover argument parsing, filter_file validation, and also integration tests.
 
 Tests runs with command `make test` as it is mentioned in [Program Execution](#program-execution)
 

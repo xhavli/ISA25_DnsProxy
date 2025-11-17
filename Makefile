@@ -31,7 +31,6 @@ clean:
 	@rm -f $(TARGET)
 	@$(MAKE) clean-pycache --no-print-directory
 
-
 # Remove Python cache
 clean-pycache:
 	@find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null
