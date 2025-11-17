@@ -12,7 +12,7 @@ void print_usage(const char* prog) {
 }
 
 void print_config(const proxy_config& config, const upstream_server& upstream) {
-    std::cout << "====== DNS Proxy Configuration ======\n";
+    std::cout << "======== DNS Proxy Configuration ========\n";
     std::cout << std::left << std::setw(15) << "Server addr:" << config.server << "\n";
 
     if (upstream.has_ipv4) {
@@ -35,7 +35,7 @@ void print_config(const proxy_config& config, const upstream_server& upstream) {
     std::cout << std::left << std::setw(15) << "Port:" << config.port << "\n";
     std::cout << std::left << std::setw(15) << "Filter file:" << config.filter_file << "\n";
     std::cout << std::left << std::setw(15) << "Verbose:" << (config.verbose ? "enabled" : "disabled") << "\n";
-    std::cout << "======================================\n";
+    std::cout << "==========================================\n";
 }
 
 void print_query(const dns_query& query, const dns_packet& pkt) {

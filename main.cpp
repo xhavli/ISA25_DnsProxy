@@ -165,7 +165,7 @@ bool relay(uint8_t* data, ssize_t len, const dns_packet& pkt, int timeout_sec = 
         if (!resolved_ip.empty()) {
             std::cout << "  Resolved: " << resolved_ip << "\n";
         } else {
-            std::cout << "  No A/AAAA record in response.\n";
+            std::cout << "  No A/AAAA record in response\n";
         }
     }
 
