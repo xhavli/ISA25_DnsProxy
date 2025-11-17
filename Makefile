@@ -20,6 +20,19 @@ all: $(TARGET)
 $(TARGET):
 	$(COMPILER) $(COMPILERFLAGS) $(INCLUDES) -o $(TARGET) $(SOURCES)
 
-# Clean up the project
+# Run Python tests using pytest
+.PHONY: test
+test: $(TARGET)
+	@pytest -q --disable-warnings --maxfail=1 || (rm -f $(TARGET) && exit 1)
+	@$(MAKE) clean --no-print-directory
+
+# Clean up the project and Python cache
 clean:
-	rm -f $(TARGET)
+	@rm -f $(TARGET)
+	@$(MAKE) clean-pycache --no-print-directory
+
+
+# Remove Python cache
+clean-pycache:
+	@find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null
+	@find . -type f -name "*.pyc" -delete 2>/dev/null

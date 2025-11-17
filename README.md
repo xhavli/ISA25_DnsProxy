@@ -33,7 +33,7 @@ Solution available on GitHub [repository](https://github.com/xhavli/ISA25_DnsPro
   - [Return Codes](#return-codes)
 - [Tests](#tests)
   - [Manual Tests](#manual-tests)
-  - [Automatic Tests](#automatic-tests)
+  - [Automated Tests](#automated-tests)
 - [Known Problems](#known-problems)
 - [Bibliography](#bibliography)
 - [Notes](#notes)
@@ -330,7 +330,11 @@ Application is compilable on the reference machine Merlin.
 
     ![BlockedIPv4Query](docs/BlockedIPv4Query.png)
 
-### Automatic Tests
+### Automated Tests
+
+Automated tests was developed mainly with ChatGPT according my test scenarios. It cover argument parsing, filter_file validation, and also integration tests.
+
+Tests runs with command `make test` as it is mentioned in [Program Execution](#program-execution)
 
 ## Known Problems
 
