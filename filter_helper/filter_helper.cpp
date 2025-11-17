@@ -119,7 +119,7 @@ std::unordered_set<std::string> load_filters(const std::string &filename, bool v
 
     if (verbose) {
         std::cout << "Loaded " << rules.size() << " filter rules\n";
-        std::cout << "======================================\n";
+        std::cout << "==========================================\n";
     }
 
     return rules;
