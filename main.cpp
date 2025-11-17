@@ -9,6 +9,7 @@
 #include <atomic>
 #include <algorithm>
 #include <fstream>
+#include <thread>
 
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -27,6 +28,15 @@
 
 volatile sig_atomic_t running = 1;
 proxy_config config;
+upstream_server upstream;
+
+#include <fcntl.h>
+
+void set_non_blocking(int sock) {
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags == -1) flags = 0;
+    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+}
 
 void signal_handler([[maybe_unused]] int signal) { running = 0; }
 
@@ -50,33 +60,117 @@ void init_signal_handling() {
     }
 }
 
-void resolve_host_ipv4(const std::string& host, in_addr* out_addr) {
-    if (!out_addr) return;
-
-    // 1) Numeric IPv4?
-    in_addr tmp{};
-    if (inet_pton(AF_INET, host.c_str(), &tmp) == 1) {
-        *out_addr = tmp;
-        return;
-    }
-
-    // 2) Resolve hostname → IPv4
+// Resolve upstream into IPv4 and IPv6 (if available)
+void resolve_upstream(const std::string& host, upstream_server& up) {
     addrinfo hints{}, *res = nullptr;
-    hints.ai_family   = AF_INET;     // IPv4 only (DNS over UDP here)
-    hints.ai_socktype = SOCK_DGRAM;  // UDP
-    hints.ai_flags    = 0;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_family = AF_UNSPEC;
 
-    int ret = getaddrinfo(host.c_str(), nullptr, &hints, &res);
-    if (ret != 0 || !res) {
-        std::cerr << "ERROR: Failed to resolve host '" << host << "': " << gai_strerror(ret) << "\n";
-        if (res) freeaddrinfo(res);
-        exit(EXIT_FAILURE);
+    if (int ret = getaddrinfo(host.c_str(), nullptr, &hints, &res); ret != 0) {
+        std::cerr <<"ERROR: Failed to resolve upstream: " << gai_strerror(ret) << "\n";
+        exit(1);
     }
 
-    *out_addr = reinterpret_cast<sockaddr_in*>(res->ai_addr)->sin_addr;
+    for (auto* p = res; p; p = p->ai_next) {
+        if (p->ai_family == AF_INET) {
+            up.has_ipv4 = true;
+            up.v4 = *reinterpret_cast<sockaddr_in*>(p->ai_addr);
+            up.v4.sin_port = htons(53);
+        } else if (p->ai_family == AF_INET6) {
+            up.has_ipv6 = true;
+            up.v6 = *reinterpret_cast<sockaddr_in6*>(p->ai_addr);
+            up.v6.sin6_port = htons(53);
+        }
+    }
+
     freeaddrinfo(res);
-    return;
+    if (!up.has_ipv4 && !up.has_ipv6) {
+        std::cerr <<"ERROR: upstream has no valid IPv4/IPv6 address\n";
+        exit(1);
+    }
 }
+
+int bind_ipv4(uint16_t port) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = INADDR_ANY;
+    if (bind(fd, (sockaddr*)&addr, sizeof(addr)) < 0) {
+        perror("bind ipv4");
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+int bind_ipv6(uint16_t port) {
+    int fd = socket(AF_INET6, SOCK_DGRAM, 0);
+    int on = 1;
+    setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &on, sizeof(on));
+    sockaddr_in6 addr{};
+    addr.sin6_family = AF_INET6;
+    addr.sin6_port = htons(port);
+    addr.sin6_addr = in6addr_any;
+    if (bind(fd, (sockaddr*)&addr, sizeof(addr)) < 0) {
+        perror("bind ipv6");
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+bool relay(uint8_t* data, ssize_t len, const dns_packet& pkt, int timeout_sec = 3) {
+    // Prefer IPv4 if available
+    int family = upstream.has_ipv4 ? AF_INET : AF_INET6;
+    sockaddr* up_addr = upstream.has_ipv4
+        ? (sockaddr*)&upstream.v4
+        : (sockaddr*)&upstream.v6;
+    socklen_t up_len = upstream.has_ipv4
+        ? sizeof(sockaddr_in)
+        : sizeof(sockaddr_in6);
+
+    int sock = socket(family, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        perror("ERROR: socket (upstream)");
+        return false;
+    }
+
+    // Send to upstream
+    if (sendto(sock, data, len, 0, up_addr, up_len) < 0) {
+        perror("ERROR: sendto (upstream)");
+        close(sock);
+        return false;
+    }
+
+    // Set receive timeout for upstream reply
+    uint8_t buffer[BUFFER_SIZE];
+    struct timeval tv{timeout_sec, 0};
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    // Receive from upstream
+    ssize_t r = recv(sock, buffer, sizeof(buffer), 0);
+    if (r < 0) {
+        perror("ERROR: recv (upstream)");
+        close(sock);
+        return false;
+    }
+
+    // Send response back to client
+    if (sendto(pkt.sockfd, buffer, r, 0, (sockaddr*)&pkt.clientAddr, pkt.clientLen) < 0) {
+        perror("ERROR: sendto (client)");
+        close(sock);
+        return false;
+    }
+
+    if(config.verbose) {
+        std::cout << "  Sending response: " << RCODE_to_string(RCODE_NO_ERROR) << "\n";
+    }
+
+    close(sock);
+    return true;
+}
+
 
 uint16_t parse_port(const char* optarg) {
     if (!optarg || !*optarg) {
@@ -118,7 +212,7 @@ void parse_arguments(int argc, char *argv[], proxy_config &config) {
             }
             config.server = argv[++i];
 
-            resolve_host_ipv4(config.server, &config.server_ip);
+                resolve_upstream(config.server, upstream);
         }
         else if (std::strcmp(argv[i], "-p") == 0) {
             if (i + 1 >= argc) {
@@ -157,72 +251,6 @@ void parse_arguments(int argc, char *argv[], proxy_config &config) {
     }
 }
 
-
-
-int make_udp_socket_with_timeout(int sec) {
-    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sockfd < 0) {
-        perror("socket");
-        exit(EXIT_FAILURE);
-    }
-
-    timeval tv{sec, 0};
-    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    return sockfd;
-}
-
-bool forward_and_relay(int listen_sock, const dns_packet &pkt, const proxy_config &cfg) {
-    // Build upstream sockaddr_in completely
-    sockaddr_in upstream{};
-    upstream.sin_family = AF_INET;
-    upstream.sin_port   = htons(53); // DNS port
-    upstream.sin_addr   = cfg.server_ip;
-
-    int upstream_sock_fd = make_udp_socket_with_timeout(3);
-    if (upstream_sock_fd < 0) return false;
-
-    ssize_t sent = sendto(upstream_sock_fd, pkt.data, pkt.length, 0, reinterpret_cast<sockaddr*>(&upstream), sizeof(upstream));
-    if (sent < 0) {
-        perror("sendto (upstream)");
-        close(upstream_sock_fd);
-        return false;
-    }
-
-    uint8_t buf[BUFFER_SIZE];
-    ssize_t rcv = recv(upstream_sock_fd, buf, sizeof(buf), 0);
-    if (rcv < 0) {
-        perror("recv(upstream)");
-        close(upstream_sock_fd);
-        return false;
-    }
-
-    if (sendto(listen_sock, buf, rcv, 0, (sockaddr*)&pkt.clientAddr, pkt.clientLen) < 0) {
-        perror("sendto(client)");
-        close(upstream_sock_fd);
-        return false;
-    }
-
-    if (cfg.verbose) {
-        char cip[INET6_ADDRSTRLEN];
-        void* addr_ptr = nullptr;
-
-        if (pkt.clientAddr.ss_family == AF_INET) {
-            const sockaddr_in* addr4 = reinterpret_cast<const sockaddr_in*>(&pkt.clientAddr);
-            addr_ptr = (void*)&addr4->sin_addr;
-        } else if (pkt.clientAddr.ss_family == AF_INET6) {
-            const sockaddr_in6* addr6 = reinterpret_cast<const sockaddr_in6*>(&pkt.clientAddr);
-            addr_ptr = (void*)&addr6->sin6_addr;
-        }
-
-        inet_ntop(pkt.clientAddr.ss_family, addr_ptr, cip, sizeof(cip));
-        std::cout << "  Relayed " << rcv << " bytes from " << cfg.server << " to " << cip << std::endl;
-    }
-
-
-    close(upstream_sock_fd);
-    return true;
-}
-
 dns_query analyze_query(const dns_packet &pkt, const std::vector<filter_rule> &filters, const proxy_config &cfg)
 {
     dns_query query;
@@ -233,6 +261,7 @@ dns_query analyze_query(const dns_packet &pkt, const std::vector<filter_rule> &f
     query.id = (pkt.data[0] << 8) | pkt.data[1];
     query.qdcount = (pkt.data[4] << 8) | pkt.data[5];
 
+    // if qdcount != 1, special case, valid but currently not supported
     if (query.qdcount != 1){
         query.valid = true;
         query.blocked = false;
@@ -279,54 +308,14 @@ dns_query analyze_query(const dns_packet &pkt, const std::vector<filter_rule> &f
     return query;
 }
 
-int create_socket(uint16_t port) {
-    // Create a UDP IPv6 socket for dual stack (IPv4 + IPv6)
-    int sock_fd = socket(AF_INET6, SOCK_DGRAM, 0);
-    if (sock_fd < 0) {
-        perror("socket");
-        return -1;
-    }
-
-    // Disable IPv6-only mode to allow both IPv4 and IPv6
-    int off = 0;
-    if (setsockopt(sock_fd, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off)) < 0) {
-        perror("setsockopt IPV6_V6ONLY");
-        close(sock_fd);
-        return -1;
-    }
-
-    // Bind to all interfaces (IPv4 and IPv6)
-    sockaddr_in6 local{};
-    local.sin6_family = AF_INET6;
-    local.sin6_addr = in6addr_any; // Accept connections from any IPv6 or IPv4 address
-    local.sin6_port = htons(port);
-
-    if (bind(sock_fd, reinterpret_cast<sockaddr*>(&local), sizeof(local)) < 0) {
-        perror("bind");
-        close(sock_fd);
-        return -1;
-    }
-
-    return sock_fd;
-}
-
-bool receive_query(int sock_fd, dns_packet &pkt) {
-    pkt.clientLen = sizeof(pkt.clientAddr);
-    pkt.length = recvfrom(sock_fd, pkt.data, BUFFER_SIZE, 0, reinterpret_cast<sockaddr*>(&pkt.clientAddr), &pkt.clientLen);
-
-    if (pkt.length < 0) {
-        if (!running) return false;
-        perror("recvfrom");
-        return false;
-    }
-
-    return true;
-}
-
 void send_response(int sock_fd, const dns_packet &pkt, RCODE code) {
     if (pkt.length < DNS_HEADER_LENGTH) {
-        std::cerr << "Invalid DNS packet received\n";
+        std::cerr << "WARNING: Invalid DNS packet received\n";
         return;
+    }
+
+    if(config.verbose) {
+        std::cout << "  Sending response: " << RCODE_to_string(code) << "\n";
     }
 
     uint8_t response[BUFFER_SIZE];
@@ -343,61 +332,82 @@ void send_response(int sock_fd, const dns_packet &pkt, RCODE code) {
     response[8] = response[9] = 0;
     response[10] = response[11] = 0;
 
-    ssize_t sent = sendto(sock_fd, response, pkt.length, 0, reinterpret_cast<const sockaddr*>(&pkt.clientAddr), pkt.clientLen);
-
-    if (sent < 0)
-        perror("sendto (response)");
+    if(sendto(sock_fd, response, pkt.length, 0, reinterpret_cast<const sockaddr*>(&pkt.clientAddr), pkt.clientLen) < 0) {
+        perror("ERROR: sendto (client)");
+    }
 }
 
-int main(int argc, char *argv[]) {
-    init_signal_handling();
-
-    parse_arguments(argc, argv, config);
-
-    if (config.verbose) {
-        print_config(config);
-    }
-
-    auto filters = load_filters(config.filter_file, config.verbose);
-
-    int wellcome_sock_fd = create_socket(config.port);
-    if (wellcome_sock_fd < 0) {
-        perror("ERROR: creating socket");
-        return 1;
-    }
-
+// Per-socket worker
+void worker(int sock, const std::vector<filter_rule>& filters) {
     while (running) {
         dns_packet pkt{};
-        if (!receive_query(wellcome_sock_fd, pkt))
-            continue;
+        pkt.sockfd = sock;
+        pkt.clientLen = sizeof(pkt.clientAddr);
+
+        pkt.length = recvfrom(sock, pkt.data, BUFFER_SIZE, 0, (sockaddr*)&pkt.clientAddr, &pkt.clientLen);
+
+        if (pkt.length < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // No data, sleep briefly
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                continue;
+            } else {
+                perror("recvfrom");
+                continue;
+            }
+        }
 
         dns_query query = analyze_query(pkt, filters, config);
 
         if (!query.valid) {
-            send_response(wellcome_sock_fd, pkt, RCODE_FORMAT_ERROR);
+            send_response(sock, pkt, RCODE_FORMAT_ERROR);
+        } else if (query.blocked) {
+            send_response(sock, pkt, RCODE_REFUSED);
+        } else if (query.qtype != QTYPE_A || query.qclass != QCLASS_IN) {
+            send_response(sock, pkt, RCODE_NOT_IMPLEMENTED);
+        } else if (!relay(pkt.data, pkt.length, pkt)) {
+            send_response(sock, pkt, RCODE_SERVER_FAILURE);
         }
 
-        if (query.blocked) {
-            std::cout << "  RESPONSE: Blocked (RCODE_REFUSED)\n";
-            send_response(wellcome_sock_fd, pkt, RCODE_REFUSED);
+        if(config.verbose) {
+            std::cout << "--------------------------------------\n";
         }
+    }
+}
 
-        // Only support A IN queries with QDCOUNT = 1
-        if (query.qclass != QCLASS_IN || query.qtype != QTYPE_A || query.qdcount != 1) {
-            std::cout << "  RESPONSE: Not implemented (RCODE_NOT_IMPLEMENTED)\n";
-            send_response(wellcome_sock_fd, pkt, RCODE_NOT_IMPLEMENTED);
-        }
+int main(int argc, char *argv[]) {
+    init_signal_handling();
+    parse_arguments(argc, argv, config);
 
-        // Relay upstream
-        if (!forward_and_relay(wellcome_sock_fd, pkt, config)) {
-            std::cout << "  RESPONSE: Allowed (RCODE_NO_ERROR)\n";
-            send_response(wellcome_sock_fd, pkt, RCODE_SERVER_FAILURE);
-        }
+    if (config.verbose) { print_config(config, upstream); }
+    auto filters = load_filters(config.filter_file, config.verbose);
 
-        std::cout << "------------------------------------\n";
+    int sock4 = bind_ipv4(config.port);
+    if (sock4 >= 0) set_non_blocking(sock4);
+
+    int sock6 = bind_ipv6(config.port);
+    if (sock6 >= 0) set_non_blocking(sock6);
+
+    if (sock4 < 0 && sock6 < 0) {
+        std::cerr <<"ERROR: could not bind IPv4 or IPv6 sockets\n";
+        return 1;
+    }
+    else if (sock4 < 0) {
+        std::cerr <<"ERROR: could not bind IPv4 socket\n";
+    }
+    else if (sock6 < 0) {
+        std::cerr <<"ERROR: could not bind IPv6 socket\n";
     }
 
-    close(wellcome_sock_fd);
-    std::cout << std::endl << "Proxy terminated successfully" << std::endl;
+    std::vector<std::thread> threads;
+    if (sock4 >= 0) threads.emplace_back(worker, sock4, std::cref(filters));
+    if (sock6 >= 0) threads.emplace_back(worker, sock6, std::cref(filters));
+
+    for (auto& th : threads) th.join();
+
+    if (sock4 >= 0) close(sock4);
+    if (sock6 >= 0) close(sock6);
+
+    std::cout << std::endl << "DNS Proxy terminated successfully with exit code 0" << std::endl;
     return 0;
 }

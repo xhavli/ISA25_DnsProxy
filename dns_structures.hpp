@@ -13,6 +13,7 @@ struct dns_packet {
     ssize_t length;
     sockaddr_storage clientAddr;
     socklen_t clientLen;
+    int sockfd = -1;
 };
 
 
