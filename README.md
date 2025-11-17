@@ -251,7 +251,7 @@ int main(int argc, char *argv[]) {
     int ipv6_sock_fd = bind_ipv6(config.port);
 
     if (ipv4_sock_fd < 0 && ipv6_sock_fd < 0) {
-        std::cerr <<"ERROR: could not bind IPv4 or IPv6 sockets\n";
+        std::cerr <<"ERROR: could not bind IPv4 and IPv6 sockets\n";
         return 1;
     }
 
@@ -302,6 +302,8 @@ void worker(int sock, const std::unordered_set<std::string>& filters) {
 ## Tests
 
 ### Manual Tests
+
+Application is compilable on the reference machine Merlin.
 
 - DNS query with allowed domain over IPv4:
 
