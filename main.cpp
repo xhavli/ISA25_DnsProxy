@@ -32,12 +32,6 @@ upstream_server upstream;
 
 #include <fcntl.h>
 
-void set_non_blocking(int sock) {
-    int flags = fcntl(sock, F_GETFL, 0);
-    if (flags == -1) flags = 0;
-    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
-}
-
 void signal_handler([[maybe_unused]] int signal) { running = 0; }
 
 void init_signal_handling() {
@@ -57,6 +51,86 @@ void init_signal_handling() {
     if (sigaction(SIGTERM, &sa, NULL) == -1) {
         perror("sigaction");
         exit(1);
+    }
+}
+
+
+uint16_t parse_port(const char* optarg) {
+    if (!optarg || !*optarg) {
+        std::cerr << "WARNING: Missing port value. Using default 53.\n";
+        return 53;
+    }
+
+    // Validate if the entire string contains only digits
+    size_t pos = 0;
+    for (; pos < std::strlen(optarg); ++pos) {
+        if (!std::isdigit(static_cast<unsigned char>(optarg[pos]))) break;
+    }
+
+    if (pos != std::strlen(optarg)) {
+        std::cerr << "WARNING: Port '" << optarg << "' contains non-numeric characters. Using default 53.\n";
+        return 53;
+    }
+
+    int value = std::atoi(optarg);
+    if (value <= 0 || value > 65535) {
+        std::cerr << "WARNING: Port '" << value << "' is out of range (1-65535). Using default 53.\n";
+        return 53;
+    }
+
+    return static_cast<uint16_t>(value);
+}
+
+void parse_arguments(int argc, char *argv[], proxy_config &config) {
+    if (argc < 3) {
+        print_usage(argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "-s") == 0) {
+            if (i + 1 >= argc) {
+                std::cerr << "ERROR: missing argument for -s\n";
+                exit(EXIT_FAILURE);
+            }
+            config.server = argv[++i];
+
+                resolve_upstream(config.server, upstream);
+        }
+        else if (std::strcmp(argv[i], "-p") == 0) {
+            if (i + 1 >= argc) {
+                std::cerr << "ERROR: missing argument for -p\n";
+                exit(EXIT_FAILURE);
+            }
+            config.port = parse_port(argv[++i]);
+        }
+        else if (std::strcmp(argv[i], "-f") == 0) {
+            if (i + 1 >= argc) {
+                std::cerr << "ERROR: missing argument for -f\n";
+                exit(EXIT_FAILURE);
+            }
+            config.filter_file = argv[++i];
+        }
+        else if (std::strcmp(argv[i], "-v") == 0) {
+            config.verbose = true;
+        }
+        else {
+            std::cerr << "ERROR: unknown option '" << argv[i] << "'\n";
+            print_usage(argv[0]);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    if (config.server.empty()) {
+        std::cerr << "ERROR: missing required -s <server>\n";
+        print_usage(argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
+    if (config.filter_file.empty()) {
+        std::cerr << "ERROR: missing required -f <filter_file>\n";
+        print_usage(argv[0]);
+        exit(EXIT_FAILURE);
     }
 }
 
@@ -182,85 +256,6 @@ bool relay(uint8_t* data, ssize_t len, const dns_packet& pkt, int timeout_sec = 
     return true;
 }
 
-uint16_t parse_port(const char* optarg) {
-    if (!optarg || !*optarg) {
-        std::cerr << "WARNING: Missing port value. Using default 53.\n";
-        return 53;
-    }
-
-    // Validate if the entire string contains only digits
-    size_t pos = 0;
-    for (; pos < std::strlen(optarg); ++pos) {
-        if (!std::isdigit(static_cast<unsigned char>(optarg[pos]))) break;
-    }
-
-    if (pos != std::strlen(optarg)) {
-        std::cerr << "WARNING: Port '" << optarg << "' contains non-numeric characters. Using default 53.\n";
-        return 53;
-    }
-
-    int value = std::atoi(optarg);
-    if (value <= 0 || value > 65535) {
-        std::cerr << "WARNING: Port '" << value << "' is out of range (1-65535). Using default 53.\n";
-        return 53;
-    }
-
-    return static_cast<uint16_t>(value);
-}
-
-void parse_arguments(int argc, char *argv[], proxy_config &config) {
-    if (argc < 3) {
-        print_usage(argv[0]);
-        exit(EXIT_FAILURE);
-    }
-
-    for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "-s") == 0) {
-            if (i + 1 >= argc) {
-                std::cerr << "ERROR: missing argument for -s\n";
-                exit(EXIT_FAILURE);
-            }
-            config.server = argv[++i];
-
-                resolve_upstream(config.server, upstream);
-        }
-        else if (std::strcmp(argv[i], "-p") == 0) {
-            if (i + 1 >= argc) {
-                std::cerr << "ERROR: missing argument for -p\n";
-                exit(EXIT_FAILURE);
-            }
-            config.port = parse_port(argv[++i]);
-        }
-        else if (std::strcmp(argv[i], "-f") == 0) {
-            if (i + 1 >= argc) {
-                std::cerr << "ERROR: missing argument for -f\n";
-                exit(EXIT_FAILURE);
-            }
-            config.filter_file = argv[++i];
-        }
-        else if (std::strcmp(argv[i], "-v") == 0) {
-            config.verbose = true;
-        }
-        else {
-            std::cerr << "ERROR: unknown option '" << argv[i] << "'\n";
-            print_usage(argv[0]);
-            exit(EXIT_FAILURE);
-        }
-    }
-
-    if (config.server.empty()) {
-        std::cerr << "ERROR: missing required -s <server>\n";
-        print_usage(argv[0]);
-        exit(EXIT_FAILURE);
-    }
-
-    if (config.filter_file.empty()) {
-        std::cerr << "ERROR: missing required -f <filter_file>\n";
-        print_usage(argv[0]);
-        exit(EXIT_FAILURE);
-    }
-}
-
 dns_query analyze_query(const dns_packet &pkt, const std::unordered_set<std::string> &filters, const proxy_config &cfg)
 {
     dns_query query;
@@ -333,7 +328,7 @@ void send_response(int sock_fd, const dns_packet &pkt, RCODE code) {
 
     // QR = 1 (response)
     response[2] |= 0x80;
-    // AA, TC, RD, RA, Z = 0 (not authoritative, not truncated, recursion desired/available = 0)    //TODO mention RA in documentation
+    // AA, TC, RD, RA, Z = 0 (not authoritative, not truncated, recursion desired/available = 0)
     response[2] &= 0x81; // keep only RD, others 0
     // Set RCODE
     response[3] = (response[3] & 0xF0) | (code & 0x0F);
