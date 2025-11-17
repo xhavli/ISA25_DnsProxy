@@ -29,6 +29,7 @@ Solution available on GitHub [repository](https://github.com/xhavli/ISA25_DnsPro
 - [Implementation Details](#implementation-details)
   - [Architecture](#architecture)
   - [Program Flow](#program-flow)
+  - [Worker Code Snippet](#worker-code-snippet)
   - [Return Codes](#return-codes)
 - [Tests](#tests)
   - [Manual Tests](#manual-tests)
@@ -183,6 +184,120 @@ Output examples:
     ```
 
 ## Implementation Details
+
+The application avoids object-oriented programming (OOP) in C++ and uses a plain C-style approach.
+
+### Architecture
+
+```plaintext
+ISA25_DNSPROXY
+
+├── dns_flags/
+│   ├── qclass.cpp
+│   ├── qclass.hpp
+│   ├── qtype.cpp
+│   ├── qtype.hpp
+│   ├── rcode.cpp
+│   └── rcode.hpp
+│
+├── docs/
+│   ├── AllowedIPv4Query.png
+│   ├── AllowedIPv6Query.png
+│   ├── BlockedIPv4Query.png
+│   ├── DnsProtocol.png
+│   ├── LogoFIT.png
+│   ├── TcpIpModel.png
+│   └── TcpIpStack.png
+│
+├── filter_helper/
+│   ├── filter_helper.cpp
+│   └── filter_helper.hpp
+│
+├── print_helper/
+│   ├── print_helper.cpp
+│   └── print_helper.hpp
+│
+├── structures/
+│   ├── dns_structures.hpp
+│   └── proxy_config.hpp
+│
+├── LICENSE
+├── main.cpp
+├── Makefile
+└── README.md
+```
+
+### Program Flow
+
+- Init signal handling
+- Parse arguments
+- Resolve upstream DNS server
+- Load filters
+- Bind listeners
+- Start listener threads
+- Capture DNS query
+- Analyze DNS query
+- Refuse answer or relay to upstream server and then back to client
+- Exit on Ctrl+C
+
+```c++
+int main(int argc, char *argv[]) {
+    init_signal_handling();
+    parse_arguments(argc, argv, config);
+
+    std::unordered_set<std::string> filters = load_filters(config.filter_file, config.verbose);
+
+    int ipv4_sock_fd = bind_ipv4(config.port);
+    int ipv6_sock_fd = bind_ipv6(config.port);
+
+    if (ipv4_sock_fd < 0 && ipv6_sock_fd < 0) {
+        std::cerr <<"ERROR: could not bind IPv4 or IPv6 sockets\n";
+        return 1;
+    }
+
+    std::vector<std::thread> threads;
+    if (ipv4_sock_fd >= 0) threads.emplace_back(worker, ipv4_sock_fd, std::cref(filters));
+    if (ipv6_sock_fd >= 0) threads.emplace_back(worker, ipv6_sock_fd, std::cref(filters));
+
+    for (auto& thread : threads) thread.join();
+
+    if (ipv4_sock_fd >= 0) close(ipv4_sock_fd);
+    if (ipv6_sock_fd >= 0) close(ipv6_sock_fd);
+
+    return 0;
+}
+```
+
+### Worker Code Snippet
+
+```c++
+void worker(int sock, const std::unordered_set<std::string>& filters) {
+    dns_packet pkt{};
+    pkt.sockfd = sock;
+    pkt.clientLen = sizeof(pkt.clientAddr);
+    
+    while (running) {
+        pkt.length = recvfrom(sock, pkt.data, BUFFER_SIZE, 0, (sockaddr*)&pkt.clientAddr, &pkt.clientLen);
+
+        dns_query query = analyze_query(pkt, filters, config);
+
+        if (!query.valid) {
+            send_response(sock, pkt, RCODE_FORMAT_ERROR);
+        } else if (query.blocked) {
+            send_response(sock, pkt, RCODE_REFUSED);
+        } else if (query.qtype != QTYPE_A || query.qclass != QCLASS_IN) {
+            send_response(sock, pkt, RCODE_NOT_IMPLEMENTED);
+        } else if (!relay(pkt.data, pkt.length, pkt)) {
+            send_response(sock, pkt, RCODE_SERVER_FAILURE);
+        }
+    }
+}
+```
+
+### Return Codes
+
+- 0 on success
+- 1 on any error
 
 ## Tests
 

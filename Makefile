@@ -1,6 +1,6 @@
 # Compiler and flags
 COMPILER = g++
-COMPILERFLAGS = -Wall -Wextra -std=c++17 -O1
+COMPILERFLAGS = -Wall -Wextra -std=c++17 -O1 #-Werror
 
 # Output file name and source files
 TARGET = dns
