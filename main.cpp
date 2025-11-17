@@ -90,34 +90,38 @@ void resolve_upstream(const std::string& host, upstream_server& up) {
     }
 }
 
-int bind_ipv4(uint16_t port) {
-    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+int bind_non_blocking_ipv4(uint16_t port) {
+    int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     addr.sin_addr.s_addr = INADDR_ANY;
-    if (bind(fd, (sockaddr*)&addr, sizeof(addr)) < 0) {
+    if (bind(sock_fd, (sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("bind ipv4");
-        close(fd);
+        close(sock_fd);
         return -1;
     }
-    return fd;
+    set_non_blocking(sock_fd);
+
+    return sock_fd;
 }
 
-int bind_ipv6(uint16_t port) {
-    int fd = socket(AF_INET6, SOCK_DGRAM, 0);
+int bind_non_blocking_ipv6(uint16_t port) {
+    int sock_fd = socket(AF_INET6, SOCK_DGRAM, 0);
     int on = 1;
-    setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &on, sizeof(on));
+    setsockopt(sock_fd, IPPROTO_IPV6, IPV6_V6ONLY, &on, sizeof(on));
     sockaddr_in6 addr{};
     addr.sin6_family = AF_INET6;
     addr.sin6_port = htons(port);
     addr.sin6_addr = in6addr_any;
-    if (bind(fd, (sockaddr*)&addr, sizeof(addr)) < 0) {
+    if (bind(sock_fd, (sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("bind ipv6");
-        close(fd);
+        close(sock_fd);
         return -1;
     }
-    return fd;
+    set_non_blocking(sock_fd);
+
+    return sock_fd;
 }
 
 bool relay(uint8_t* data, ssize_t len, const dns_packet& pkt, int timeout_sec = 3) {
@@ -259,7 +263,7 @@ void parse_arguments(int argc, char *argv[], proxy_config &config) {
     }
 }
 
-dns_query analyze_query(const dns_packet &pkt, const std::vector<filter_rule> &filters, const proxy_config &cfg)
+dns_query analyze_query(const dns_packet &pkt, const std::unordered_set<std::string> &filters, const proxy_config &cfg)
 {
     dns_query query;
     if (pkt.length < DNS_HEADER_LENGTH)
@@ -346,7 +350,7 @@ void send_response(int sock_fd, const dns_packet &pkt, RCODE code) {
 }
 
 // Per-socket worker
-void worker(int sock, const std::vector<filter_rule>& filters) {
+void worker(int sock, const std::unordered_set<std::string>& filters) {
     while (running) {
         dns_packet pkt{};
         pkt.sockfd = sock;
@@ -388,33 +392,30 @@ int main(int argc, char *argv[]) {
     parse_arguments(argc, argv, config);
 
     if (config.verbose) { print_config(config, upstream); }
-    auto filters = load_filters(config.filter_file, config.verbose);
+    std::unordered_set<std::string> filters = load_filters(config.filter_file, config.verbose);
 
-    int sock4 = bind_ipv4(config.port);
-    if (sock4 >= 0) set_non_blocking(sock4);
+    int ipv4_sock_fd = bind_non_blocking_ipv4(config.port);
+    int ipv6_sock_fd = bind_non_blocking_ipv6(config.port);
 
-    int sock6 = bind_ipv6(config.port);
-    if (sock6 >= 0) set_non_blocking(sock6);
-
-    if (sock4 < 0 && sock6 < 0) {
+    if (ipv4_sock_fd < 0 && ipv6_sock_fd < 0) {
         std::cerr <<"ERROR: could not bind IPv4 or IPv6 sockets\n";
         return 1;
     }
-    else if (sock4 < 0) {
+    else if (ipv4_sock_fd < 0) {
         std::cerr <<"ERROR: could not bind IPv4 socket\n";
     }
-    else if (sock6 < 0) {
+    else if (ipv6_sock_fd < 0) {
         std::cerr <<"ERROR: could not bind IPv6 socket\n";
     }
 
     std::vector<std::thread> threads;
-    if (sock4 >= 0) threads.emplace_back(worker, sock4, std::cref(filters));
-    if (sock6 >= 0) threads.emplace_back(worker, sock6, std::cref(filters));
+    if (ipv4_sock_fd >= 0) threads.emplace_back(worker, ipv4_sock_fd, std::cref(filters));
+    if (ipv6_sock_fd >= 0) threads.emplace_back(worker, ipv6_sock_fd, std::cref(filters));
 
-    for (auto& th : threads) th.join();
+    for (auto& thread : threads) thread.join();
 
-    if (sock4 >= 0) close(sock4);
-    if (sock6 >= 0) close(sock6);
+    if (ipv4_sock_fd >= 0) close(ipv4_sock_fd);
+    if (ipv6_sock_fd >= 0) close(ipv6_sock_fd);
 
     std::cout << std::endl << "DNS Proxy terminated successfully with exit code 0" << std::endl;
     return 0;

@@ -1,52 +1,91 @@
 #include <fstream>
 #include <iostream>
 #include <algorithm>
+#include <cctype>
+#include <unordered_set>
 
 #include "filter_helper.hpp"
 
-static inline void trim(std::string &s) {
-    size_t start = s.find_first_not_of(" \t\r\n");
-    size_t end   = s.find_last_not_of(" \t\r\n");
-    if (start == std::string::npos) s.clear();
-    else s = s.substr(start, end - start + 1);
+// Trim leading/trailing whitespace
+static inline void trim(std::string &line) {
+    size_t start = line.find_first_not_of(" \t\r\n");
+    size_t end   = line.find_last_not_of(" \t\r\n");
+    if (start == std::string::npos) line.clear();
+    else line = line.substr(start, end - start + 1);
 }
 
-static inline std::string to_lower(const std::string &s) {
-    std::string out = s;
-    std::transform(out.begin(), out.end(), out.begin(), ::tolower);
-    return out;
+static std::string extract_domain(std::string line) {
+    // Remove inline comments
+    size_t hash_pos = line.find('#');
+    if (hash_pos != std::string::npos) line = line.substr(0, hash_pos);
+
+    // Trim whitespace
+    trim(line);
+
+    // Strip protocol if present
+    if (line.rfind("http://", 0) == 0)      line = line.substr(7);
+    else if (line.rfind("https://", 0) == 0) line = line.substr(8);
+
+    // Strip leading "www."
+    if (line.rfind("www.", 0) == 0) line = line.substr(4);
+
+    // Remove path, query, or fragment
+    size_t separator = line.find_first_of("/?#");
+    if (separator != std::string::npos)
+        line = line.substr(0, separator);
+
+    // Convert to lowercase
+    std::transform(line.begin(), line.end(), line.begin(), ::tolower);
+
+    return line;
 }
 
-bool valid_label(const std::string &label) {
-    if (label.empty() || label.size() > 63) return false;
+// Validate domain label (RFC 1035)
+static bool is_valid_label(const std::string &label) {
+    if (label.empty() || label.size() > 63)
+        return false;
+
+    if (!std::isalnum(label.front()) || !std::isalnum(label.back()))
+        return false;
+
     for (char c : label) {
-        if (!(std::isalnum((unsigned char)c) || c == '-'))
+        if (!(std::isalnum(c) || c == '-'))
             return false;
     }
+
     return true;
 }
 
-bool validate_domain_no_wildcard(const std::string &d) {
-    if (d.empty() || d.size() > 253) return false;
+// Validate full domain (RFC-compliant, no wildcards)
+static bool validate_domain(const std::string &domain) {
+    if (domain.empty() || domain.size() > 253)
+        return false;
+
     size_t start = 0;
     while (true) {
-        size_t pos = d.find('.', start);
-        std::string label = (pos == std::string::npos)
-                ? d.substr(start)
-                : d.substr(start, pos - start);
-        if (!valid_label(label)) return false;
-        if (pos == std::string::npos) break;
-        start = pos + 1;
+        size_t dot = domain.find('.', start);
+        std::string label = (dot == std::string::npos)
+                                ? domain.substr(start)
+                                : domain.substr(start, dot - start);
+
+        if (!is_valid_label(label))
+            return false;
+
+        if (dot == std::string::npos)
+            break;
+
+        start = dot + 1;
     }
     return true;
 }
 
-std::vector<filter_rule> load_filters(const std::string &filename, bool verbose) {
+// Load domain blocklist from file
+std::unordered_set<std::string> load_filters(const std::string &filename, bool verbose) {
     std::ifstream file(filename);
-    std::vector<filter_rule> rules;
+    std::unordered_set<std::string> rules;
 
     if (!file.is_open()) {
-        std::cerr << "Failed to open filter file: " << filename << "\n";
+        std::cerr << "ERROR: Cannot open file '" << filename << "'\n";
         return rules;
     }
 
@@ -55,61 +94,48 @@ std::vector<filter_rule> load_filters(const std::string &filename, bool verbose)
 
     while (std::getline(file, line)) {
         lineno++;
-        trim(line);
-        if (line.empty() || line[0] == '#')
+
+        // Extract and normalize domain
+        std::string domain = extract_domain(line);
+
+        // Skip empty or comment-only lines
+        if (domain.empty())
             continue;
 
-        std::string raw = to_lower(line);
-        bool wildcard = false;
-
-        if (raw[0] == '*') {
-            wildcard = true;
-            if (raw.size() > 1 && raw[1] == '*') {
-                std::cerr << "WARNING: Malformed filter on line "
-                          << lineno << ": '" << line << "'\n";
-                continue;
-            }
-            raw = raw.substr(1);
-            if (!raw.empty() && raw[0] == '.')
-                raw = raw.substr(1);
-        }
-
-        if (!validate_domain_no_wildcard(raw)) {
-            std::cerr << "WARNING: Malformed filter on line "
-                      << lineno << ": '" << line << "'\n";
+        // Reject wildcards
+        if (domain.find('*') != std::string::npos) {
+            std::cerr << "WARNING: Wildcards are not allowed on line " << lineno << ": '" << line << "'\n";
             continue;
         }
 
-        rules.push_back({ wildcard, raw });
+        // Validate domain
+        if (!validate_domain(domain)) {
+            std::cerr << "WARNING: Invalid domain format on line " << lineno << ": '" << line << "'\n";
+            continue;
+        }
+
+        rules.insert(domain);
     }
 
     if (verbose) {
-        std::cout << "Loaded " << rules.size()
-                  << " filter rules from " << filename << "\n";
+        std::cout << "Loaded " << rules.size() << " filter rules\n";
         std::cout << "======================================\n";
     }
 
     return rules;
 }
 
-bool is_blocked(const std::string &domain, const std::vector<filter_rule> &rules) {
-    std::string d = to_lower(domain);
-
-    for (const auto &r : rules) {
-        if (!r.wildcard) {
-            if (d == r.domain)
-                return true;
-            if (d.size() > r.domain.size() &&
-                d.compare(d.size() - r.domain.size(), r.domain.size(), r.domain) == 0 &&
-                d[d.size() - r.domain.size() - 1] == '.')
-                return true;
-        } else {
-            if (d == r.domain)
-                return true;
-            if (d.size() > r.domain.size() &&
-                d.compare(d.size() - r.domain.size(), r.domain.size(), r.domain) == 0)
-                return true;
+// Check if domain is blocked by matching exact or suffix
+bool is_blocked(std::string_view domain, const std::unordered_set<std::string> &rules) {
+    for (const auto &rule : rules) {
+        if (domain == rule)
+            return true;
+        if (domain.size() > rule.size() &&
+            domain.compare(domain.size() - rule.size(), rule.size(), rule) == 0 &&
+            domain[domain.size() - rule.size() - 1] == '.') {
+            return true;
         }
     }
     return false;
 }
+
