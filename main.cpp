@@ -359,11 +359,10 @@ void worker(int sock, const std::unordered_set<std::string>& filters) {
 
         struct timeval tv;
         tv.tv_sec = 0;
-        tv.tv_usec = 100000; // 100ms timeout
+        tv.tv_usec = 250000; // 250ms timeout
 
         int ret = select(sock + 1, &fds, nullptr, nullptr, &tv);
 
-        // std::cout << "Waiting for data..." << std::endl;
         if (ret < 0) {
             if (errno == EINTR) continue; // Interrupted by signal
             perror("ERROR: select");
