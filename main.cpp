@@ -54,6 +54,35 @@ void init_signal_handling() {
     }
 }
 
+// Resolve upstream into IPv4 and IPv6 (if available)
+void resolve_upstream(const std::string& host, upstream_server& up) {
+    addrinfo hints{}, *res = nullptr;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_family = AF_UNSPEC;
+
+    if (int ret = getaddrinfo(host.c_str(), nullptr, &hints, &res); ret != 0) {
+        std::cerr <<"ERROR: Failed to resolve upstream: " << gai_strerror(ret) << "\n";
+        exit(1);
+    }
+
+    for (auto* p = res; p; p = p->ai_next) {
+        if (p->ai_family == AF_INET) {
+            up.has_ipv4 = true;
+            up.ipv4 = *reinterpret_cast<sockaddr_in*>(p->ai_addr);
+            up.ipv4.sin_port = htons(53);
+        } else if (p->ai_family == AF_INET6) {
+            up.has_ipv6 = true;
+            up.ipv6 = *reinterpret_cast<sockaddr_in6*>(p->ai_addr);
+            up.ipv6.sin6_port = htons(53);
+        }
+    }
+
+    freeaddrinfo(res);
+    if (!up.has_ipv4 && !up.has_ipv6) {
+        std::cerr <<"ERROR: upstream has no valid IPv4/IPv6 address\n";
+        exit(1);
+    }
+}
 
 uint16_t parse_port(const char* optarg) {
     if (!optarg || !*optarg) {
@@ -131,36 +160,6 @@ void parse_arguments(int argc, char *argv[], proxy_config &config) {
         std::cerr << "ERROR: missing required -f <filter_file>\n";
         print_usage(argv[0]);
         exit(EXIT_FAILURE);
-    }
-}
-
-// Resolve upstream into IPv4 and IPv6 (if available)
-void resolve_upstream(const std::string& host, upstream_server& up) {
-    addrinfo hints{}, *res = nullptr;
-    hints.ai_socktype = SOCK_DGRAM;
-    hints.ai_family = AF_UNSPEC;
-
-    if (int ret = getaddrinfo(host.c_str(), nullptr, &hints, &res); ret != 0) {
-        std::cerr <<"ERROR: Failed to resolve upstream: " << gai_strerror(ret) << "\n";
-        exit(1);
-    }
-
-    for (auto* p = res; p; p = p->ai_next) {
-        if (p->ai_family == AF_INET) {
-            up.has_ipv4 = true;
-            up.ipv4 = *reinterpret_cast<sockaddr_in*>(p->ai_addr);
-            up.ipv4.sin_port = htons(53);
-        } else if (p->ai_family == AF_INET6) {
-            up.has_ipv6 = true;
-            up.ipv6 = *reinterpret_cast<sockaddr_in6*>(p->ai_addr);
-            up.ipv6.sin6_port = htons(53);
-        }
-    }
-
-    freeaddrinfo(res);
-    if (!up.has_ipv4 && !up.has_ipv6) {
-        std::cerr <<"ERROR: upstream has no valid IPv4/IPv6 address\n";
-        exit(1);
     }
 }
 
