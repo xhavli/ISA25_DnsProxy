@@ -28,9 +28,7 @@
 volatile sig_atomic_t running = 1;
 proxy_config config;
 
-void signal_handler([[maybe_unused]] int signal) {
-    running = 0;
-}
+void signal_handler([[maybe_unused]] int signal) { running = 0; }
 
 void init_signal_handling() {
     std::signal(SIGINT, signal_handler);  // Ctrl+C
@@ -233,10 +231,13 @@ dns_query analyze_query(const dns_packet &pkt, const std::vector<filter_rule> &f
 
     // --- Parse header ---
     query.id = (pkt.data[0] << 8) | pkt.data[1];
-    uint16_t qdcount = (pkt.data[4] << 8) | pkt.data[5];
+    query.qdcount = (pkt.data[4] << 8) | pkt.data[5];
 
-    if (qdcount != 1)
+    if (query.qdcount != 1){
+        query.valid = true;
+        query.blocked = false;
         return query;
+    }
 
     // --- Extract QNAME ---
     int offset = DNS_HEADER_LENGTH;
@@ -262,11 +263,11 @@ dns_query analyze_query(const dns_packet &pkt, const std::vector<filter_rule> &f
     query.qclass = (pkt.data[offset + 2] << 8) | pkt.data[offset + 3];
 
     // --- Normalize for checking ---
-    std::string d = query.qname;
-    std::transform(d.begin(), d.end(), d.begin(), ::tolower);
+    std::string domain = query.qname;
+    std::transform(domain.begin(), domain.end(), domain.begin(), ::tolower);
 
     // --- Check filter list ---
-    query.blocked = is_blocked(d, filters);
+    query.blocked = is_blocked(domain, filters);
 
     query.valid = true;
 
@@ -278,7 +279,7 @@ dns_query analyze_query(const dns_packet &pkt, const std::vector<filter_rule> &f
     return query;
 }
 
-int create_socket(uint16_t port = 53) {
+int create_socket(uint16_t port) {
     // Create a UDP IPv6 socket for dual stack (IPv4 + IPv6)
     int sock_fd = socket(AF_INET6, SOCK_DGRAM, 0);
     if (sock_fd < 0) {
@@ -381,9 +382,9 @@ int main(int argc, char *argv[]) {
             send_response(wellcome_sock_fd, pkt, RCODE_REFUSED);
         }
 
-        // Only support A IN queries
-        if (query.qclass != QCLASS_IN || query.qtype != QTYPE_A) {
-            std::cout << "  RESPONSE: Not implemented\n";
+        // Only support A IN queries with QDCOUNT = 1
+        if (query.qclass != QCLASS_IN || query.qtype != QTYPE_A || query.qdcount != 1) {
+            std::cout << "  RESPONSE: Not implemented (RCODE_NOT_IMPLEMENTED)\n";
             send_response(wellcome_sock_fd, pkt, RCODE_NOT_IMPLEMENTED);
         }
 
