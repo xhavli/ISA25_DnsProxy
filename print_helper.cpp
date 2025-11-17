@@ -17,12 +17,12 @@ void print_config(const proxy_config& config, const upstream_server& upstream) {
 
     if (upstream.has_ipv4) {
         char buf4[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &upstream.v4.sin_addr, buf4, sizeof(buf4));
+        inet_ntop(AF_INET, &upstream.ipv4.sin_addr, buf4, sizeof(buf4));
         std::cout << std::left << std::setw(15) << "IPv4 upstream:" << buf4 << "\n";
     }
     if (upstream.has_ipv6) {
         char buf6[INET6_ADDRSTRLEN];
-        inet_ntop(AF_INET6, &upstream.v6.sin6_addr, buf6, sizeof(buf6));
+        inet_ntop(AF_INET6, &upstream.ipv6.sin6_addr, buf6, sizeof(buf6));
         std::cout << std::left << std::setw(15) << "IPv6 upstream:" << buf6 << "\n";
     }
 
@@ -60,14 +60,60 @@ void print_query(const dns_query& query, const dns_packet& pkt) {
     }
 
     std::cout << "Query received:\n";
-    std::cout << "  ID: " << query.id << "\n";
     std::cout << "  From: " << client_ip << ":" << client_port << "\n";
+    std::cout << "  ID: " << query.id << "\n";
     std::cout << "  Name: " << query.qname << "\n";
-    std::cout << "  Type: " << query.qtype;
-    if (query.qtype == QTYPE_A) std::cout << " (A)";
-    std::cout << "\n";
-    std::cout << "  Class: " << query.qclass;
-    if (query.qclass == QCLASS_IN) std::cout << " (IN)";
-    std::cout << "\n";
+    std::cout << "  Type: " << query.qtype << " (" << QTYPE_to_string(static_cast<QTYPE>(query.qtype)) << ")\n";
+    std::cout << "  Class: " << query.qclass << " (" << QCLASS_to_string(static_cast<QCLASS>(query.qclass)) << ")\n";
+    std::cout << "  --\n";
     std::cout << "  Blocked: " << (query.blocked ? "YES" : "NO") << "\n";
 }
+
+
+
+const uint8_t* skip_dns_name(const uint8_t* ptr, [[maybe_unused]] const uint8_t* base) {
+    while (*ptr) {
+        if ((*ptr & 0xC0) == 0xC0) { // compressed label
+            return ptr + 2;
+        }
+        ptr += *ptr + 1;
+    }
+    return ptr + 1; // skip zero byte
+}
+
+std::string extract_ip(const uint8_t* buffer, ssize_t len) {
+    if (len < DNS_HEADER_LENGTH) return ""; // minimum DNS header size
+    const uint8_t* ptr = buffer + DNS_HEADER_LENGTH; // skip DNS header
+    const uint8_t* end = buffer + len;
+
+    // Skip questions
+    uint16_t qdcount = ntohs(*(uint16_t*)(buffer + 4));
+    for (int i = 0; i < qdcount; i++) {
+        ptr = skip_dns_name(ptr, buffer);
+        if (ptr + 4 > end) return "";
+        ptr += 4; // QTYPE + QCLASS
+    }
+
+    // Parse answers
+    uint16_t ancount = ntohs(*(uint16_t*)(buffer + 6));
+    for (int i = 0; i < ancount; i++) {
+        ptr = skip_dns_name(ptr, buffer);
+        if (ptr + 10 > end) return "";
+
+        uint16_t type = ntohs(*(uint16_t*)ptr);
+        ptr += 8; // TYPE + CLASS + TTL
+        uint16_t rdlen = ntohs(*(uint16_t*)ptr);
+        ptr += 2;
+
+        if ((type == QTYPE_A && rdlen == 4) || (type == QTYPE_AAAA && rdlen == 16)) {
+            char ip[INET6_ADDRSTRLEN];
+            inet_ntop(type == QTYPE_A ? AF_INET : AF_INET6, ptr, ip, sizeof(ip));
+            return std::string(ip);
+        }
+
+        ptr += rdlen;
+    }
+
+    return "";
+}
+

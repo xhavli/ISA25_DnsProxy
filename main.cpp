@@ -74,12 +74,12 @@ void resolve_upstream(const std::string& host, upstream_server& up) {
     for (auto* p = res; p; p = p->ai_next) {
         if (p->ai_family == AF_INET) {
             up.has_ipv4 = true;
-            up.v4 = *reinterpret_cast<sockaddr_in*>(p->ai_addr);
-            up.v4.sin_port = htons(53);
+            up.ipv4 = *reinterpret_cast<sockaddr_in*>(p->ai_addr);
+            up.ipv4.sin_port = htons(53);
         } else if (p->ai_family == AF_INET6) {
             up.has_ipv6 = true;
-            up.v6 = *reinterpret_cast<sockaddr_in6*>(p->ai_addr);
-            up.v6.sin6_port = htons(53);
+            up.ipv6 = *reinterpret_cast<sockaddr_in6*>(p->ai_addr);
+            up.ipv6.sin6_port = htons(53);
         }
     }
 
@@ -124,8 +124,8 @@ bool relay(uint8_t* data, ssize_t len, const dns_packet& pkt, int timeout_sec = 
     // Prefer IPv4 if available
     int family = upstream.has_ipv4 ? AF_INET : AF_INET6;
     sockaddr* up_addr = upstream.has_ipv4
-        ? (sockaddr*)&upstream.v4
-        : (sockaddr*)&upstream.v6;
+        ? (sockaddr*)&upstream.ipv4
+        : (sockaddr*)&upstream.ipv6;
     socklen_t up_len = upstream.has_ipv4
         ? sizeof(sockaddr_in)
         : sizeof(sockaddr_in6);
@@ -149,28 +149,36 @@ bool relay(uint8_t* data, ssize_t len, const dns_packet& pkt, int timeout_sec = 
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     // Receive from upstream
-    ssize_t r = recv(sock, buffer, sizeof(buffer), 0);
-    if (r < 0) {
+    ssize_t recvd = recv(sock, buffer, sizeof(buffer), 0);
+    if (recvd < 0) {
         perror("ERROR: recv (upstream)");
         close(sock);
         return false;
     }
 
+    if (config.verbose) {
+        std::string resolved_ip = extract_ip(buffer, recvd);
+        if (!resolved_ip.empty()) {
+            std::cout << "  Resolved: " << resolved_ip << "\n";
+        } else {
+            std::cout << "  No A/AAAA record in response.\n";
+        }
+    }
+
     // Send response back to client
-    if (sendto(pkt.sockfd, buffer, r, 0, (sockaddr*)&pkt.clientAddr, pkt.clientLen) < 0) {
+    if (sendto(pkt.sockfd, buffer, recvd, 0, (sockaddr*)&pkt.clientAddr, pkt.clientLen) < 0) {
         perror("ERROR: sendto (client)");
         close(sock);
         return false;
     }
 
     if(config.verbose) {
-        std::cout << "  Sending response: " << RCODE_to_string(RCODE_NO_ERROR) << "\n";
+        std::cout << "  Response: " << RCODE_to_string(RCODE_NO_ERROR) << "\n";
     }
 
     close(sock);
     return true;
 }
-
 
 uint16_t parse_port(const char* optarg) {
     if (!optarg || !*optarg) {
@@ -315,7 +323,7 @@ void send_response(int sock_fd, const dns_packet &pkt, RCODE code) {
     }
 
     if(config.verbose) {
-        std::cout << "  Sending response: " << RCODE_to_string(code) << "\n";
+        std::cout << "  Response: " << RCODE_to_string(code) << "\n";
     }
 
     uint8_t response[BUFFER_SIZE];
@@ -370,7 +378,7 @@ void worker(int sock, const std::vector<filter_rule>& filters) {
         }
 
         if(config.verbose) {
-            std::cout << "--------------------------------------\n";
+            std::cout << "--------------------------------------" << std::endl;
         }
     }
 }

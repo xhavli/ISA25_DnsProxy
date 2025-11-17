@@ -7,7 +7,6 @@
 constexpr int BUFFER_SIZE = 512; // Standard DNS packet size over UDP
 constexpr int DNS_HEADER_LENGTH = 12; // DNS header is always 12 bytes
 
-
 struct dns_packet {
     uint8_t data[BUFFER_SIZE];
     ssize_t length;
@@ -15,7 +14,6 @@ struct dns_packet {
     socklen_t clientLen;
     int sockfd = -1;
 };
-
 
 struct dns_query {
     bool valid = false;
