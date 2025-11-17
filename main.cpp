@@ -1,3 +1,9 @@
+/**
+ * Project ISA25 Filter Resolver
+ * Author: Adam Havlík (xhavli59)
+ * Date: 17.11.2025
+ */
+
 #include <iostream>
 #include <iomanip>
 #include <vector>
@@ -54,7 +60,6 @@ void init_signal_handling() {
     }
 }
 
-// Resolve upstream into IPv4 and IPv6 (if available)
 void resolve_upstream(const std::string& host, upstream_server& up) {
     addrinfo hints{}, *res = nullptr;
     hints.ai_socktype = SOCK_DGRAM;
@@ -365,7 +370,6 @@ void worker(int sock, const std::unordered_set<std::string>& filters) {
             continue; // timeout, loop around and check `running`
         }
         
-        // Data is available
         pkt.clientLen = sizeof(pkt.clientAddr);
         pkt.length = recvfrom(sock, pkt.data, BUFFER_SIZE, 0, (sockaddr*)&pkt.clientAddr, &pkt.clientLen);
 

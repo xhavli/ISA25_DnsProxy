@@ -1,3 +1,9 @@
+/**
+ * Project ISA25 Filter Resolver
+ * Author: Adam Havlík (xhavli59)
+ * Date: 17.11.2025
+ */
+
 #include "qclass.hpp"
 
 const char* QCLASS_to_string(enum QCLASS qclass) {

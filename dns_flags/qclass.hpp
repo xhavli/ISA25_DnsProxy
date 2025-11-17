@@ -1,3 +1,9 @@
+/**
+ * Project ISA25 Filter Resolver
+ * Author: Adam Havlík (xhavli59)
+ * Date: 17.11.2025
+ */
+
 #pragma once
 
 // DNS Question Class (QCLASS) defined in RFC 1035

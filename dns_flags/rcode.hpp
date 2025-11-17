@@ -1,6 +1,12 @@
+/**
+ * Project ISA25 Filter Resolver
+ * Author: Adam Havlík (xhavli59)
+ * Date: 17.11.2025
+ */
+
 #pragma once
 
-// DNS Response Code (RCODE) definitions — RFC 1035
+// DNS Response Code (RCODE) defined in RFC 1035
 enum RCODE {
     RCODE_NO_ERROR        = 0,  // No error condition
     RCODE_FORMAT_ERROR    = 1,  // Unable to interpret the query
@@ -10,5 +16,4 @@ enum RCODE {
     RCODE_REFUSED         = 5,  // Refused for policy reasons
 };
 
-// Function prototype
 const char* RCODE_to_string(enum RCODE code);

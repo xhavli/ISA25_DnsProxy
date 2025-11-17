@@ -1,3 +1,9 @@
+/**
+ * Project ISA25 Filter Resolver
+ * Author: Adam Havlík (xhavli59)
+ * Date: 17.11.2025
+ */
+
 #include <fstream>
 #include <iostream>
 #include <algorithm>
@@ -19,14 +25,11 @@ static std::string extract_domain(std::string line) {
     size_t hash_pos = line.find('#');
     if (hash_pos != std::string::npos) line = line.substr(0, hash_pos);
 
-    // Trim whitespace
     trim(line);
 
     // Strip protocol if present
     if (line.rfind("http://", 0) == 0)      line = line.substr(7);
     else if (line.rfind("https://", 0) == 0) line = line.substr(8);
-
-    // Strip leading "www."
     if (line.rfind("www.", 0) == 0) line = line.substr(4);
 
     // Remove path, query, or fragment
@@ -95,20 +98,16 @@ std::unordered_set<std::string> load_filters(const std::string &filename, bool v
     while (std::getline(file, line)) {
         lineno++;
 
-        // Extract and normalize domain
         std::string domain = extract_domain(line);
 
-        // Skip empty or comment-only lines
         if (domain.empty())
             continue;
 
-        // Reject wildcards
         if (domain.find('*') != std::string::npos) {
             std::cerr << "WARNING: Wildcards are not allowed on line " << lineno << ": '" << line << "'\n";
             continue;
         }
 
-        // Validate domain
         if (!validate_domain(domain)) {
             std::cerr << "WARNING: Invalid domain format on line " << lineno << ": '" << line << "'\n";
             continue;

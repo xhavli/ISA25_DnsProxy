@@ -1,3 +1,9 @@
+/**
+ * Project ISA25 Filter Resolver
+ * Author: Adam Havlík (xhavli59)
+ * Date: 17.11.2025
+ */
+
 #include "qtype.hpp"
 
 const char* QTYPE_to_string(enum QTYPE qtype) {

@@ -1,3 +1,7 @@
+# Project: ISA25 Filter Resolver
+# Author: Adam Havlik (xhavli59)
+# Date: 17.11.2025
+
 # Compiler and flags
 COMPILER = g++
 COMPILERFLAGS = -Wall -Wextra -std=c++17 -O1 #-Werror
