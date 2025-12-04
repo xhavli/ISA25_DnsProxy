@@ -271,7 +271,7 @@ ISA25_DNSPROXY
 - Capture DNS query
 - Analyze DNS query
 - Refuse answer or relay to upstream server and then back to client
-- Exit on Ctrl+C
+- Exit on `Ctrl+C`
 
 ```c++
 int main(int argc, char *argv[]) {
@@ -322,7 +322,7 @@ void worker(int sock, const std::unordered_set<std::string>& filters) {
             send_response(sock, pkt, RCODE_FORMAT_ERROR);
         } else if (query.blocked) {
             send_response(sock, pkt, RCODE_REFUSED);
-        } else if (query.qtype != QTYPE_A || query.qclass != QCLASS_IN) {
+        } else if (query.qtype != QTYPE_A || query.qclass != QCLASS_IN || query.qdcount != 1) {
             send_response(sock, pkt, RCODE_NOT_IMPLEMENTED);
         } else if (!relay(pkt.data, pkt.length, pkt)) {
             send_response(sock, pkt, RCODE_SERVER_FAILURE);
@@ -334,7 +334,7 @@ void worker(int sock, const std::unordered_set<std::string>& filters) {
 ### Return Codes
 
 - 0 on success
-- 1 on any error
+- 1 on any fatal error
 
 <!-- markdownlint-disable MD033 -->
 <div style="page-break-after: always;"></div>
